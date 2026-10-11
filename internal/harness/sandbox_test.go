@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeDocker puts a `docker` shell script on PATH that appends each
@@ -46,12 +47,26 @@ func fakeDockerOutput(t *testing.T, exitFor map[string]int, stdoutFor map[string
 		}
 		fmt.Fprintf(&cases, "  \"%s\"*) %sexit %d ;;\n", prefix, out, exitFor[prefix])
 	}
-	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\ncase \"$*\" in\n%s  *) exit 0 ;;\nesac\n", logPath, cases.String())
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\n[ \"$1\" = attach ] && cat >> %q\ncase \"$*\" in\n%s  *) exit 0 ;;\nesac\n", logPath, logPath+".stdin", cases.String())
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
+}
+
+// attachedStdin is what the fake docker received on `docker attach`'s stdin.
+// The attach runs in the background, so it polls briefly.
+func attachedStdin(t *testing.T, logPath string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		b, _ := os.ReadFile(logPath + ".stdin")
+		if len(b) > 0 || time.Now().After(deadline) {
+			return string(b)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func calls(t *testing.T, logPath string) []string {
@@ -405,5 +420,107 @@ func TestSandboxRunArgsWithoutAProxyCAMountNothing(t *testing.T) {
 		if strings.Contains(joined, bad) {
 			t.Errorf("without inspection, args must not mention %q: %s", bad, joined)
 		}
+	}
+}
+
+func TestNewPlaceholderIsRandomAndTokenShapedEnough(t *testing.T) {
+	a, err := newPlaceholder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := newPlaceholder()
+	if a == b || !strings.HasPrefix(a, "oc_placeholder_") || len(a) != len("oc_placeholder_")+32 {
+		t.Errorf("placeholders %q, %q", a, b)
+	}
+}
+
+func TestRunArgsGiveTheSandboxOnlyThePlaceholder(t *testing.T) {
+	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET"}, "")
+	s.image, s.generated = "oc-sandbox-default:x", "/tmp/cfg"
+	s.githubPlaceholder = "oc_placeholder_abc"
+	pn := &proxyNet{network: "oc-net-1", container: "oc-proxy-1"}
+	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	if strings.Contains(joined, "github_pat_SECRET") {
+		t.Fatalf("the real token is in the sandbox's argv: %s", joined)
+	}
+	for _, want := range []string{
+		"-e GH_TOKEN=oc_placeholder_abc",
+		"-e GH_NO_UPDATE_NOTIFIER=1",
+		"-e GIT_TERMINAL_PROMPT=0",
+		"-e GIT_CONFIG_COUNT=2",
+		"-e GIT_CONFIG_KEY_0=credential.https://github.com.helper",
+		"-e GIT_CONFIG_VALUE_0= ",
+		"-e GIT_CONFIG_KEY_1=credential.https://github.com.helper",
+		`-e GIT_CONFIG_VALUE_1=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("run args missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestRunArgsWithoutAGitHubTokenSetNoGitHubEnv(t *testing.T) {
+	s := newSandbox(Options{Sandbox: true}, "")
+	s.image, s.generated = "oc-sandbox-default:x", "/tmp/cfg"
+	pn := &proxyNet{network: "oc-net-1", container: "oc-proxy-1"}
+	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	for _, bad := range []string{"GH_TOKEN", "GIT_CONFIG_COUNT"} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("run args mention %s without a token: %s", bad, joined)
+		}
+	}
+}
+
+func TestProviderConfigCarriesTheTokenAndPlaceholder(t *testing.T) {
+	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET"}, "")
+	s.githubPlaceholder = "oc_placeholder_abc"
+	b, err := s.providerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "github_pat_SECRET") || !strings.Contains(string(b), "oc_placeholder_abc") {
+		t.Errorf("config = %s", b)
+	}
+	none := newSandbox(Options{Sandbox: true}, "")
+	if b, _ := none.providerConfig(); b != nil {
+		t.Errorf("no token must mean no provider config, got %q", b)
+	}
+}
+
+// The proxy swaps the placeholder it was given for the token; the sandbox has to
+// hold that same placeholder, or injection silently never happens.
+func TestSandboxRunGivesTheProxyAndTheSandboxTheSamePlaceholder(t *testing.T) {
+	logPath := fakeDockerProxy(t, nil, nil)
+	t.Setenv("TMPDIR", t.TempDir())
+	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET"}, filepath.Join(t.TempDir(), "absent.jsonc"))
+	if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
+		t.Fatal(err)
+	}
+	s.image, s.proxyImage = "oc-sandbox-default:test", "oc-sandbox-proxy:test"
+	if err := s.Run(t.TempDir(), "llama-cpp", "m"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var cfg struct {
+		Providers []struct{ Name, Token, Placeholder string }
+	}
+	if err := json.Unmarshal([]byte(attachedStdin(t, logPath)), &cfg); err != nil || len(cfg.Providers) != 1 {
+		t.Fatalf("the proxy's stdin config = %v, %v", cfg, err)
+	}
+	if cfg.Providers[0].Token != "github_pat_SECRET" || cfg.Providers[0].Placeholder == "" {
+		t.Fatalf("proxy config = %+v", cfg.Providers[0])
+	}
+
+	var sandboxRun string
+	for _, c := range calls(t, logPath) {
+		if strings.Contains(c, "github_pat_SECRET") {
+			t.Errorf("the token is in a docker argv: %s", c)
+		}
+		if strings.HasPrefix(c, "run --rm") {
+			sandboxRun = c
+		}
+	}
+	if want := "GH_TOKEN=" + cfg.Providers[0].Placeholder + " "; !strings.Contains(sandboxRun, want) {
+		t.Errorf("the sandbox's GH_TOKEN doesn't carry the proxy's placeholder (%s):\n%s", want, sandboxRun)
 	}
 }

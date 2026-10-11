@@ -24,7 +24,7 @@ func fakeDockerProxy(t *testing.T, exitFor map[string]int, stdoutFor map[string]
 func TestStartProxyNetCreatesNetworkThenContainerThenConnectsBridge(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
 
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", []byte("host.docker.internal:8080\n"), false)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", []byte("host.docker.internal:8080\n"), false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestStartProxyNetCreatesNetworkThenContainerThenConnectsBridge(t *testing.T
 func TestStartProxyNetWritesThePolicyFile(t *testing.T) {
 	fakeDockerProxy(t, nil, nil)
 	policy := []byte("# comment\nhost.docker.internal:8080\n")
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", policy, false)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", policy, false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestStartProxyNetWritesThePolicyFile(t *testing.T) {
 
 func TestProxyNetStopTearsDownContainerThenNetwork(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestProxyNetStopTearsDownContainerThenNetwork(t *testing.T) {
 
 func TestStartProxyNetCleansUpTheNetworkWhenTheContainerFailsToStart(t *testing.T) {
 	logPath := fakeDocker(t, map[string]int{"run -d": 1})
-	if _, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false); err == nil {
+	if _, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil); err == nil {
 		t.Fatal("expected an error when the proxy container fails to start")
 	}
 	var created, removed string
@@ -163,7 +163,7 @@ func TestStartProxyNetSurfacesDockerStderr(t *testing.T) {
 		map[string]int{"network create": 1},
 		map[string]string{"network create": "Error response from daemon: pool overlaps with other one on this address space"},
 	)
-	_, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false)
+	_, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error when network create fails")
 	}
@@ -179,9 +179,34 @@ func TestDefaultPolicyParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("policy.txt: %v", err)
 	}
-	for _, want := range []string{"registry.npmjs.org:443", "github.com:443", "models.dev:443"} {
+	for _, want := range []string{
+		"registry.npmjs.org:443", "github.com:443", "models.dev:443",
+		"api.github.com:443",
+	} {
 		if !pol.Allows(want) {
 			t.Errorf("default policy doesn't allow %s", want)
+		}
+	}
+	// Not needed by git or gh through the provider; kept out until something is.
+	for _, not := range []string{"codeload.github.com:443", "raw.githubusercontent.com:443", "objects.githubusercontent.com:443"} {
+		if pol.Allows(not) {
+			t.Errorf("default policy allows %s", not)
+		}
+	}
+}
+
+func TestDefaultPolicyListsTheGitHubProviderHostsExplicitly(t *testing.T) {
+	pol, err := proxy.ParsePolicy(bytes.NewReader(defaultPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := proxy.NewGitHubProvider("github_pat_x", "oc_placeholder_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range p.Hosts() {
+		if !pol.Explicit(h) {
+			t.Errorf("%s is bound to the GitHub provider but isn't an explicit policy entry, so it would never be decrypted", h)
 		}
 	}
 }
@@ -213,7 +238,7 @@ func TestSandboxPolicyIsDefaultsPlusModelServer(t *testing.T) {
 func TestStartProxyNetFailsWithTheProxyOutputWhenItExitsAtStartup(t *testing.T) {
 	const why = "oc-proxy: parsing policy file /etc/oc-proxy/policy.txt: line 3: \"github.com\" is not host:port"
 	logPath := fakeDockerOutput(t, nil, map[string]string{"logs": why, "inspect -f": "false"})
-	_, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false)
+	_, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error when the proxy container exits at startup")
 	}
@@ -232,7 +257,7 @@ func TestStartProxyNetFailsWithTheProxyOutputWhenItExitsAtStartup(t *testing.T) 
 
 func TestStartProxyNetWaitsForTheProxyToListen(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -266,7 +291,7 @@ func TestSandboxPolicyWithAllNetAllowsAnyPublicHost(t *testing.T) {
 func TestStartProxyNetWithInspectCreatesTheCAVolumeAndRunsTheProxyWithIt(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
 	t.Setenv("TMPDIR", t.TempDir())
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -301,7 +326,7 @@ func TestStartProxyNetWithInspectCreatesTheCAVolumeAndRunsTheProxyWithIt(t *test
 
 func TestStartProxyNetWithoutInspectHasNoVolumeAndNoIntercept(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -319,7 +344,7 @@ func TestStartProxyNetWithoutInspectHasNoVolumeAndNoIntercept(t *testing.T) {
 func TestProxyNetStopRemovesTheCAVolumeLast(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
 	t.Setenv("TMPDIR", t.TempDir())
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -346,7 +371,7 @@ func TestProxyNetStopRemovesTheCAVolumeLast(t *testing.T) {
 
 func TestStartProxyNetRemovesTheCAVolumeWhenTheContainerFailsToStart(t *testing.T) {
 	logPath := fakeDocker(t, map[string]int{"run -d": 1})
-	if _, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true); err == nil {
+	if _, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, nil); err == nil {
 		t.Fatal("expected an error when the proxy container fails to start")
 	}
 	var created, removed string
@@ -368,7 +393,7 @@ func TestStartProxyNetWithInspectFollowsTheProxyLogIntoAFile(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true)
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
@@ -402,5 +427,89 @@ func TestStartProxyNetWithInspectFollowsTheProxyLogIntoAFile(t *testing.T) {
 	p.stop()
 	if _, err := os.Stat(p.logFile); err != nil {
 		t.Errorf("stop() must keep the log file: %v", err)
+	}
+}
+
+func TestStartProxyNetSendsProvidersOnStdinAndNeverInArgv(t *testing.T) {
+	logPath := fakeDockerProxy(t, nil, nil)
+	t.Setenv("TMPDIR", t.TempDir())
+	line, err := proxy.EncodeProviders([]proxy.ProviderConfig{{Name: "github", Token: "github_pat_SECRET", Placeholder: "oc_placeholder_1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, line)
+	if err != nil {
+		t.Fatalf("startProxyNet: %v", err)
+	}
+	defer p.stop()
+
+	var runCall, attachCall string
+	attachIdx, connectIdx := -1, -1
+	for i, c := range calls(t, logPath) {
+		if strings.Contains(c, "github_pat_SECRET") {
+			t.Errorf("the token is in a docker argv: %s", c)
+		}
+		switch {
+		case strings.HasPrefix(c, "run -d "):
+			runCall = c
+		case strings.HasPrefix(c, "attach "):
+			attachCall, attachIdx = c, i
+		case strings.HasPrefix(c, "network connect "):
+			connectIdx = i
+		}
+	}
+	if !strings.Contains(runCall, " -i ") || !strings.HasSuffix(runCall, "oc-proxy:test -intercept -providers-stdin") {
+		t.Errorf("run args = %q, want -i before the image and -intercept -providers-stdin after it", runCall)
+	}
+	if !strings.Contains(attachCall, "--sig-proxy=false") || !strings.HasSuffix(attachCall, p.container) {
+		t.Errorf("attach args = %q", attachCall)
+	}
+	if attachIdx < 0 || connectIdx < 0 || attachIdx > connectIdx {
+		t.Errorf("attach (%d) must come before network connect (%d)", attachIdx, connectIdx)
+	}
+	if got := attachedStdin(t, logPath); got != string(line) {
+		t.Errorf("attached stdin = %q, want the provider line", got)
+	}
+}
+
+func TestStartProxyNetWithoutProvidersDoesNotAttachOrOpenStdin(t *testing.T) {
+	logPath := fakeDockerProxy(t, nil, nil)
+	t.Setenv("TMPDIR", t.TempDir())
+	p, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.stop()
+	for _, c := range calls(t, logPath) {
+		if strings.HasPrefix(c, "attach ") {
+			t.Errorf("unexpected docker attach: %s", c)
+		}
+		if strings.HasPrefix(c, "run -d ") && (strings.Contains(c, " -i ") || strings.Contains(c, "-providers-stdin")) {
+			t.Errorf("run args must be unchanged without providers: %s", c)
+		}
+	}
+}
+
+func TestStartProxyNetRefusesProvidersWithoutInspect(t *testing.T) {
+	fakeDockerProxy(t, nil, nil)
+	if _, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, false, []byte("x\n")); err == nil {
+		t.Fatal("want an error: credentials can't be injected without decrypting")
+	}
+}
+
+// If docker attach fails, the proxy would wait on stdin for ever: oc has to say
+// so as soon as it knows, not after the readiness timeout.
+func TestStartProxyNetFailsFastWhenAttachFails(t *testing.T) {
+	fakeDockerOutput(t, map[string]int{"attach": 1}, map[string]string{"logs": "", "inspect": "true"})
+	t.Setenv("TMPDIR", t.TempDir())
+	line, _ := proxy.EncodeProviders([]proxy.ProviderConfig{{Name: "github", Token: "github_pat_x", Placeholder: "oc_placeholder_1"}})
+
+	start := time.Now()
+	_, err := startProxyNet("oc-proxy:test", "172.17.0.1", nil, true, line)
+	if err == nil || !strings.Contains(err.Error(), "attach") {
+		t.Fatalf("err = %v, want one naming docker attach", err)
+	}
+	if took := time.Since(start); took > proxyReadyTimeout/2 {
+		t.Errorf("took %s to notice a failed attach (timeout %s)", took, proxyReadyTimeout)
 	}
 }
