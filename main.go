@@ -1,4 +1,4 @@
-// Command oc starts a local llama-server, points opencode at it, and runs
+// Command rnes starts a local llama-server, points opencode at it, and runs
 // opencode in the current directory.
 package main
 
@@ -14,15 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/df3l0p/oc/images"
-	"github.com/df3l0p/oc/internal/harness"
-	"github.com/df3l0p/oc/internal/llamaserver"
-	"github.com/df3l0p/oc/internal/proxy"
+	"github.com/df3l0p/rnes/images"
+	"github.com/df3l0p/rnes/internal/harness"
+	"github.com/df3l0p/rnes/internal/llamaserver"
+	"github.com/df3l0p/rnes/internal/proxy"
 )
 
 const providerKey = "llama-cpp"
 
-// cliConfig holds oc's flags. Parsed into a struct (rather than package
+// cliConfig holds rnes's flags. Parsed into a struct (rather than package
 // globals or ad-hoc locals in run()) so flag parsing stays in one place and
 // run() takes a plain value.
 type cliConfig struct {
@@ -42,10 +42,10 @@ type cliConfig struct {
 	allNet bool
 	// noInspect turns off TLS interception in the sandbox's proxy.
 	noInspect bool
-	// githubToken is OC_GITHUB_TOKEN, read (and unset) at startup; empty means
+	// githubToken is RNES_GITHUB_TOKEN, read (and unset) at startup; empty means
 	// no GitHub credentials. It is only kept with -sandbox.
 	githubToken string
-	// openrouterKey is OC_OPENROUTER_API_KEY, handled like githubToken.
+	// openrouterKey is RNES_OPENROUTER_API_KEY, handled like githubToken.
 	openrouterKey string
 }
 
@@ -58,18 +58,18 @@ func (c cliConfig) validate() error {
 	}
 	if c.githubToken != "" {
 		if err := proxy.ValidateToken(c.githubToken); err != nil {
-			return fmt.Errorf("OC_GITHUB_TOKEN is unusable: %w", err)
+			return fmt.Errorf("RNES_GITHUB_TOKEN is unusable: %w", err)
 		}
 		if c.noInspect {
-			return fmt.Errorf("OC_GITHUB_TOKEN is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the token; unset one of them")
+			return fmt.Errorf("RNES_GITHUB_TOKEN is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the token; unset one of them")
 		}
 	}
 	if c.openrouterKey != "" {
 		if err := proxy.ValidateToken(c.openrouterKey); err != nil {
-			return fmt.Errorf("OC_OPENROUTER_API_KEY is unusable: %w", err)
+			return fmt.Errorf("RNES_OPENROUTER_API_KEY is unusable: %w", err)
 		}
 		if c.noInspect {
-			return fmt.Errorf("OC_OPENROUTER_API_KEY is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the key; unset one of them")
+			return fmt.Errorf("RNES_OPENROUTER_API_KEY is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the key; unset one of them")
 		}
 	}
 	return nil
@@ -90,20 +90,20 @@ func (c *cliConfig) applyImplications() {
 // envHelp is the Environment section of -h.
 const envHelp = `
 Environment:
-  OC_GITHUB_TOKEN   GitHub token the sandbox's proxy injects for git and gh at
-                    github.com and api.github.com (requires -sandbox). The sandbox
-                    only ever holds a placeholder. Prefer a fine-grained token
-                    scoped to what the agent needs.
-                    To reuse your logged-in gh account instead (broad scopes: the
-                    agent can do anything your account can):
-                        export OC_GITHUB_TOKEN=$(gh auth token)
-  OC_OPENROUTER_API_KEY
-                    OpenRouter API key the sandbox's proxy injects at openrouter.ai
-                    (requires -sandbox). The sandbox only ever holds a placeholder,
-                    but an agent in it can still make OpenRouter calls, so use a
-                    dedicated key with a low credit limit. Local llama stays the
-                    default; switch to an openrouter model inside opencode. Prompts
-                    and code context leave your machine when you do.
+  RNES_GITHUB_TOKEN   GitHub token the sandbox's proxy injects for git and gh at
+                      github.com and api.github.com (requires -sandbox). The sandbox
+                      only ever holds a placeholder. Prefer a fine-grained token
+                      scoped to what the agent needs.
+                      To reuse your logged-in gh account instead (broad scopes: the
+                      agent can do anything your account can):
+                        export RNES_GITHUB_TOKEN=$(gh auth token)
+  RNES_OPENROUTER_API_KEY
+                      OpenRouter API key the sandbox's proxy injects at openrouter.ai
+                      (requires -sandbox). The sandbox only ever holds a placeholder,
+                      but an agent in it can still make OpenRouter calls, so use a
+                      dedicated key with a low credit limit. Local llama stays the
+                      default; switch to an openrouter model inside opencode. Prompts
+                      and code context leave your machine when you do.
 `
 
 // usage is flag.Usage: the flag defaults followed by the environment.
@@ -121,7 +121,7 @@ func tokenWarning(token string) string {
 	if strings.HasPrefix(token, "github_pat_") {
 		return ""
 	}
-	return "OC_GITHUB_TOKEN isn't a fine-grained token (github_pat_…), so it can't be limited to specific repositories; a fine-grained token is safer"
+	return "RNES_GITHUB_TOKEN isn't a fine-grained token (github_pat_…), so it can't be limited to specific repositories; a fine-grained token is safer"
 }
 
 // sessionCredential returns val only when a session will use it: it needs a
@@ -131,28 +131,28 @@ func (c cliConfig) sessionCredential(env, val string) string {
 	switch {
 	case val == "":
 	case !c.sandbox:
-		fmt.Fprintf(os.Stderr, "oc: note: %s is ignored without -sandbox\n", env)
+		fmt.Fprintf(os.Stderr, "rnes: note: %s is ignored without -sandbox\n", env)
 	case c.sandboxUpdate:
-		fmt.Fprintf(os.Stderr, "oc: note: %s is ignored with -sandbox-update (no session runs)\n", env)
+		fmt.Fprintf(os.Stderr, "rnes: note: %s is ignored with -sandbox-update (no session runs)\n", env)
 	default:
 		return val
 	}
 	return ""
 }
 
-// githubTokenFromEnv returns OC_GITHUB_TOKEN and removes it from oc's
-// environment, so nothing oc starts afterwards (docker, llama-server) inherits it.
+// githubTokenFromEnv returns RNES_GITHUB_TOKEN and removes it from rnes's
+// environment, so nothing rnes starts afterwards (docker, llama-server) inherits it.
 func githubTokenFromEnv() string {
-	tok := os.Getenv("OC_GITHUB_TOKEN")
-	os.Unsetenv("OC_GITHUB_TOKEN")
+	tok := os.Getenv("RNES_GITHUB_TOKEN")
+	os.Unsetenv("RNES_GITHUB_TOKEN")
 	return tok
 }
 
-// openRouterKeyFromEnv returns OC_OPENROUTER_API_KEY and removes it from oc's
+// openRouterKeyFromEnv returns RNES_OPENROUTER_API_KEY and removes it from rnes's
 // environment, like githubTokenFromEnv.
 func openRouterKeyFromEnv() string {
-	key := os.Getenv("OC_OPENROUTER_API_KEY")
-	os.Unsetenv("OC_OPENROUTER_API_KEY")
+	key := os.Getenv("RNES_OPENROUTER_API_KEY")
+	os.Unsetenv("RNES_OPENROUTER_API_KEY")
 	return key
 }
 
@@ -169,7 +169,7 @@ func activeProviders(c cliConfig) []string {
 	return names
 }
 
-// listenHost is the address llama-server listens on, and that oc itself uses
+// listenHost is the address llama-server listens on, and that rnes itself uses
 // to reach it. An explicit -host (hostSet, or any non-default value) is used as
 // is, with a warning if it's a wildcard. Without one, a harness that runs the agent in a
 // container picks the narrowest address the container can reach, which on a
@@ -177,7 +177,7 @@ func activeProviders(c cliConfig) []string {
 func listenHost(h harness.Harness, host string, hostSet bool) (string, error) {
 	if hostSet || host != defaultHost {
 		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
-			fmt.Fprintf(os.Stderr, "oc: warning: -host %s makes llama-server reachable from your whole network\n", host)
+			fmt.Fprintf(os.Stderr, "rnes: warning: -host %s makes llama-server reachable from your whole network\n", host)
 		}
 		return host, nil
 	}
@@ -207,14 +207,14 @@ func parseFlags() (cliConfig, error) {
 		}
 	})
 	cfg.applyImplications()
-	cfg.githubToken = cfg.sessionCredential("OC_GITHUB_TOKEN", githubTokenFromEnv())
-	cfg.openrouterKey = cfg.sessionCredential("OC_OPENROUTER_API_KEY", openRouterKeyFromEnv())
+	cfg.githubToken = cfg.sessionCredential("RNES_GITHUB_TOKEN", githubTokenFromEnv())
+	cfg.openrouterKey = cfg.sessionCredential("RNES_OPENROUTER_API_KEY", openRouterKeyFromEnv())
 	return cfg, cfg.validate()
 }
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "oc:", err)
+		fmt.Fprintln(os.Stderr, "rnes:", err)
 		os.Exit(1)
 	}
 }
@@ -230,16 +230,16 @@ func run() error {
 		return err
 	}
 	if cfg.githubToken != "" {
-		fmt.Fprintln(os.Stderr, "oc: GitHub token: the sandbox proxy injects it at github.com and api.github.com; the sandbox only holds a placeholder (use a fine-grained token scoped to what the agent needs)")
+		fmt.Fprintln(os.Stderr, "rnes: GitHub token: the sandbox proxy injects it at github.com and api.github.com; the sandbox only holds a placeholder (use a fine-grained token scoped to what the agent needs)")
 		if w := tokenWarning(cfg.githubToken); w != "" {
-			fmt.Fprintln(os.Stderr, "oc: warning:", w)
+			fmt.Fprintln(os.Stderr, "rnes: warning:", w)
 		}
 	}
 	if cfg.openrouterKey != "" {
-		fmt.Fprintln(os.Stderr, "oc: OpenRouter key: the sandbox proxy injects it at openrouter.ai; the sandbox only holds a placeholder (use a dedicated key with a low credit limit). Prompts leave your machine when you pick an openrouter model.")
+		fmt.Fprintln(os.Stderr, "rnes: OpenRouter key: the sandbox proxy injects it at openrouter.ai; the sandbox only holds a placeholder (use a dedicated key with a low credit limit). Prompts leave your machine when you pick an openrouter model.")
 	}
 	if names := activeProviders(cfg); len(names) > 0 {
-		fmt.Fprintln(os.Stderr, "oc: credential providers:", strings.Join(names, ", "))
+		fmt.Fprintln(os.Stderr, "rnes: credential providers:", strings.Join(names, ", "))
 	}
 	if err := h.Available(); err != nil {
 		return err
@@ -260,11 +260,11 @@ func run() error {
 	// -sandbox-update is done once the images are freshly built: no server,
 	// no session.
 	if cfg.sandboxUpdate {
-		fmt.Fprintln(os.Stderr, "oc: sandbox images are up to date")
+		fmt.Fprintln(os.Stderr, "rnes: sandbox images are up to date")
 		return nil
 	}
 
-	// oc talks to the server on the address it listens on: a server bound to a
+	// rnes talks to the server on the address it listens on: a server bound to a
 	// specific interface doesn't answer on the loopback.
 	host, err := listenHost(h, cfg.host, cfg.hostSet)
 	if err != nil {
@@ -282,7 +282,7 @@ func run() error {
 	}
 
 	// Register as a user of this port's llama-server for the whole run, so
-	// that if it's shared with another concurrent oc instance, whichever one
+	// that if it's shared with another concurrent rnes instance, whichever one
 	// started it only stops it once every registered instance is gone.
 	unregister, err := llamaserver.Register(cfg.port)
 	if err != nil {
@@ -293,7 +293,7 @@ func run() error {
 	var proc *llamaserver.Process
 
 	if llamaserver.IsHealthy(baseURL) {
-		fmt.Fprintf(os.Stderr, "oc: reusing existing llama-server at %s\n", baseURL)
+		fmt.Fprintf(os.Stderr, "rnes: reusing existing llama-server at %s\n", baseURL)
 	} else {
 		command, err := llamaserver.FindCommand()
 		if err != nil {
@@ -305,14 +305,14 @@ func run() error {
 		// interleaved with opencode's screen redraws corrupts the display.
 		// Mode 0600 since the log may include request/model details tied to
 		// the user's session.
-		logPath := filepath.Join(os.TempDir(), fmt.Sprintf("oc-llama-server-%d.log", cfg.port))
+		logPath := filepath.Join(os.TempDir(), fmt.Sprintf("rnes-llama-server-%d.log", cfg.port))
 		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			return fmt.Errorf("creating llama-server log file: %w", err)
 		}
 		defer logFile.Close()
 
-		fmt.Fprintf(os.Stderr, "oc: starting llama-server on %s (logs: %s)\n", baseURL, logPath)
+		fmt.Fprintf(os.Stderr, "rnes: starting llama-server on %s (logs: %s)\n", baseURL, logPath)
 		proc, err = llamaserver.Start(command, opts, logFile)
 		if err != nil {
 			return err
@@ -335,7 +335,7 @@ func run() error {
 
 	model, ok := llamaserver.ResolveModel(modelIDs, cfg.model)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "oc: %s is not served by %s, trying to download it\n", cfg.model, baseURL)
+		fmt.Fprintf(os.Stderr, "rnes: %s is not served by %s, trying to download it\n", cfg.model, baseURL)
 		if err := llamaserver.Download(cfg.model, os.Stderr); err != nil {
 			return err
 		}
@@ -345,7 +345,7 @@ func run() error {
 		}
 		model, ok = llamaserver.ResolveModel(modelIDs, cfg.model)
 		if !ok {
-			return fmt.Errorf("model %q is still not served by %s after download; if that llama-server was started with a fixed model (-hf/-m) or before the download, stop it (or use -port) so oc can start a fresh one", cfg.model, baseURL)
+			return fmt.Errorf("model %q is still not served by %s after download; if that llama-server was started with a fixed model (-hf/-m) or before the download, stop it (or use -port) so rnes can start a fresh one", cfg.model, baseURL)
 		}
 	}
 
@@ -358,10 +358,10 @@ func run() error {
 		return fmt.Errorf("resolving current directory: %w", err)
 	}
 
-	// opencode shares oc's foreground process group, so Ctrl+C delivers
-	// SIGINT to both. Without this, Go's default disposition kills oc
+	// opencode shares rnes's foreground process group, so Ctrl+C delivers
+	// SIGINT to both. Without this, Go's default disposition kills rnes
 	// immediately, skipping the llama-server cleanup below. Notifying (and
-	// not reacting to) the signal here just stops oc from dying on its own;
+	// not reacting to) the signal here just stops rnes from dying on its own;
 	// opencode still receives and handles the signal directly.
 	sigCh := make(chan os.Signal, 1)
 	// SIGHUP (terminal closed) is included for the same reason, so cleanup
@@ -371,19 +371,19 @@ func run() error {
 
 	runErr := h.Run(cwd, providerKey, model)
 
-	// The last oc session out stops an oc-started server, even if a different
-	// session started it. Servers oc didn't start have no record and are left
+	// The last rnes session out stops an rnes-started server, even if a different
+	// session started it. Servers rnes didn't start have no record and are left
 	// alone.
 	if llamaserver.OtherSessionsActive(cfg.port) {
-		fmt.Fprintln(os.Stderr, "oc: another oc session is still using llama-server, leaving it up")
+		fmt.Fprintln(os.Stderr, "rnes: another rnes session is still using llama-server, leaving it up")
 	} else if proc != nil {
-		fmt.Fprintln(os.Stderr, "oc: stopping llama-server")
+		fmt.Fprintln(os.Stderr, "rnes: stopping llama-server")
 		if err := proc.Stop(); err != nil {
-			fmt.Fprintln(os.Stderr, "oc: failed to stop llama-server:", err)
+			fmt.Fprintln(os.Stderr, "rnes: failed to stop llama-server:", err)
 		}
 		_ = llamaserver.StopRecordedServer(cfg.port) // clears the record
 	} else if err := llamaserver.StopRecordedServer(cfg.port); err != nil {
-		fmt.Fprintln(os.Stderr, "oc: failed to stop llama-server:", err)
+		fmt.Fprintln(os.Stderr, "rnes: failed to stop llama-server:", err)
 	}
 
 	return runErr

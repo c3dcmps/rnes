@@ -15,7 +15,7 @@ import (
 
 // fakeDocker puts a `docker` shell script on PATH that appends each
 // invocation's argv (one line per call) to the returned log file. exitFor maps
-// an argv prefix (e.g. "build" or "image inspect oc-sandbox-") to the exit
+// an argv prefix (e.g. "build" or "image inspect rnes-sandbox-") to the exit
 // status it should return, the longest matching prefix winning; anything not
 // listed exits 0.
 func fakeDocker(t *testing.T, exitFor map[string]int) (logPath string) {
@@ -153,25 +153,25 @@ func TestSandboxConfigureWithMissingHostConfig(t *testing.T) {
 
 func TestSandboxRunArgs(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true}, "")
-	s.image = "oc-sandbox-default:abc123" // as set by Prepare
+	s.image = "rnes-sandbox-default:abc123" // as set by Prepare
 	s.generated = "/tmp/gen.jsonc"
-	pn := &proxyNet{network: "oc-net-1-aa", container: "oc-proxy-1-aa"}
+	pn := &proxyNet{network: "rnes-net-1-aa", container: "rnes-proxy-1-aa"}
 
-	args := s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false)
+	args := s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
-		"run --rm --pull=never -i --name oc-1-aa",
-		"--network oc-net-1-aa",
-		"-e HTTP_PROXY=http://oc-proxy-1-aa:8888",
-		"-e HTTPS_PROXY=http://oc-proxy-1-aa:8888",
-		"-e http_proxy=http://oc-proxy-1-aa:8888",
-		"-e https_proxy=http://oc-proxy-1-aa:8888",
+		"run --rm --pull=never -i --name rnes-1-aa",
+		"--network rnes-net-1-aa",
+		"-e HTTP_PROXY=http://rnes-proxy-1-aa:8888",
+		"-e HTTPS_PROXY=http://rnes-proxy-1-aa:8888",
+		"-e http_proxy=http://rnes-proxy-1-aa:8888",
+		"-e https_proxy=http://rnes-proxy-1-aa:8888",
 		"-e NO_PROXY=localhost,127.0.0.1,::1",
 		"-e no_proxy=localhost,127.0.0.1,::1",
 		"-v /work/proj:/workspace",
-		"-v /tmp/gen.jsonc:/etc/oc/opencode.jsonc:ro",
-		"-e OPENCODE_CONFIG=/etc/oc/opencode.jsonc",
-		"oc-sandbox-default:abc123 -m llama-cpp/m1 .",
+		"-v /tmp/gen.jsonc:/etc/rnes/opencode.jsonc:ro",
+		"-e OPENCODE_CONFIG=/etc/rnes/opencode.jsonc",
+		"rnes-sandbox-default:abc123 -m llama-cpp/m1 .",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q:\n%s", want, joined)
@@ -288,8 +288,8 @@ func TestSandboxRunUsesUniqueContainerNames(t *testing.T) {
 		if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
 			t.Fatal(err)
 		}
-		s.image = "oc-sandbox-default:test" // as set by Prepare
-		s.proxyImage = "oc-sandbox-proxy:test"
+		s.image = "rnes-sandbox-default:test" // as set by Prepare
+		s.proxyImage = "rnes-sandbox-proxy:test"
 		if err := s.Run(t.TempDir(), "llama-cpp", "m"); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -386,38 +386,38 @@ func TestSandboxInspectsByDefaultAndNotWithNoInspect(t *testing.T) {
 
 func TestSandboxRunArgsTrustTheSessionCA(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true}, "")
-	s.image = "oc-sandbox-default:abc123"
+	s.image = "rnes-sandbox-default:abc123"
 	s.generated = "/tmp/gen.jsonc"
-	pn := &proxyNet{network: "oc-net-1-aa", container: "oc-proxy-1-aa", caVolume: "oc-ca-1-aa"}
+	pn := &proxyNet{network: "rnes-net-1-aa", container: "rnes-proxy-1-aa", caVolume: "rnes-ca-1-aa"}
 
-	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
 	for _, want := range []string{
-		// Not under /etc/oc, where the generated config is bind-mounted.
-		"-v oc-ca-1-aa:/etc/oc-ca:ro",
-		"-e NODE_EXTRA_CA_CERTS=/etc/oc-ca/ca.pem",
-		"-e SSL_CERT_FILE=/etc/oc-ca/ca.pem",
-		"-e GIT_SSL_CAINFO=/etc/oc-ca/ca.pem",
-		"-e CURL_CA_BUNDLE=/etc/oc-ca/ca.pem",
-		"-e REQUESTS_CA_BUNDLE=/etc/oc-ca/ca.pem",
+		// Not under /etc/rnes, where the generated config is bind-mounted.
+		"-v rnes-ca-1-aa:/etc/rnes-ca:ro",
+		"-e NODE_EXTRA_CA_CERTS=/etc/rnes-ca/ca.pem",
+		"-e SSL_CERT_FILE=/etc/rnes-ca/ca.pem",
+		"-e GIT_SSL_CAINFO=/etc/rnes-ca/ca.pem",
+		"-e CURL_CA_BUNDLE=/etc/rnes-ca/ca.pem",
+		"-e REQUESTS_CA_BUNDLE=/etc/rnes-ca/ca.pem",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q:\n%s", want, joined)
 		}
 	}
 	// The mounts must come before the image: after it they'd be the agent's args.
-	if strings.Index(joined, "oc-ca-1-aa:/etc/oc-ca:ro") > strings.Index(joined, "oc-sandbox-default:abc123") {
+	if strings.Index(joined, "rnes-ca-1-aa:/etc/rnes-ca:ro") > strings.Index(joined, "rnes-sandbox-default:abc123") {
 		t.Errorf("the CA mount must precede the image: %s", joined)
 	}
 }
 
 func TestSandboxRunArgsWithoutAProxyCAMountNothing(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true, NoInspect: true}, "")
-	s.image = "oc-sandbox-default:abc123"
+	s.image = "rnes-sandbox-default:abc123"
 	s.generated = "/tmp/gen.jsonc"
-	pn := &proxyNet{network: "oc-net-1-aa", container: "oc-proxy-1-aa"}
+	pn := &proxyNet{network: "rnes-net-1-aa", container: "rnes-proxy-1-aa"}
 
-	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
-	for _, bad := range []string{"oc-ca", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "GIT_SSL_CAINFO", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE"} {
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	for _, bad := range []string{"rnes-ca", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "GIT_SSL_CAINFO", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE"} {
 		if strings.Contains(joined, bad) {
 			t.Errorf("without inspection, args must not mention %q: %s", bad, joined)
 		}
@@ -430,22 +430,22 @@ func TestNewPlaceholderIsRandomAndTokenShapedEnough(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := newPlaceholder()
-	if a == b || !strings.HasPrefix(a, "oc_placeholder_") || len(a) != len("oc_placeholder_")+32 {
+	if a == b || !strings.HasPrefix(a, "rnes_placeholder_") || len(a) != len("rnes_placeholder_")+32 {
 		t.Errorf("placeholders %q, %q", a, b)
 	}
 }
 
 func TestRunArgsGiveTheSandboxOnlyThePlaceholder(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET"}, "")
-	s.image, s.generated = "oc-sandbox-default:x", "/tmp/cfg"
-	s.githubPlaceholder = "oc_placeholder_abc"
-	pn := &proxyNet{network: "oc-net-1", container: "oc-proxy-1"}
-	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	s.image, s.generated = "rnes-sandbox-default:x", "/tmp/cfg"
+	s.githubPlaceholder = "rnes_placeholder_abc"
+	pn := &proxyNet{network: "rnes-net-1", container: "rnes-proxy-1"}
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
 	if strings.Contains(joined, "github_pat_SECRET") {
 		t.Fatalf("the real token is in the sandbox's argv: %s", joined)
 	}
 	for _, want := range []string{
-		"-e GH_TOKEN=oc_placeholder_abc",
+		"-e GH_TOKEN=rnes_placeholder_abc",
 		"-e GH_NO_UPDATE_NOTIFIER=1",
 		"-e GIT_TERMINAL_PROMPT=0",
 		"-e GIT_CONFIG_COUNT=2",
@@ -462,9 +462,9 @@ func TestRunArgsGiveTheSandboxOnlyThePlaceholder(t *testing.T) {
 
 func TestRunArgsWithoutAGitHubTokenSetNoGitHubEnv(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true}, "")
-	s.image, s.generated = "oc-sandbox-default:x", "/tmp/cfg"
-	pn := &proxyNet{network: "oc-net-1", container: "oc-proxy-1"}
-	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	s.image, s.generated = "rnes-sandbox-default:x", "/tmp/cfg"
+	pn := &proxyNet{network: "rnes-net-1", container: "rnes-proxy-1"}
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
 	for _, bad := range []string{"GH_TOKEN", "GIT_CONFIG_COUNT"} {
 		if strings.Contains(joined, bad) {
 			t.Errorf("run args mention %s without a token: %s", bad, joined)
@@ -474,12 +474,12 @@ func TestRunArgsWithoutAGitHubTokenSetNoGitHubEnv(t *testing.T) {
 
 func TestProviderConfigCarriesTheTokenAndPlaceholder(t *testing.T) {
 	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET"}, "")
-	s.githubPlaceholder = "oc_placeholder_abc"
+	s.githubPlaceholder = "rnes_placeholder_abc"
 	b, err := s.providerConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "github_pat_SECRET") || !strings.Contains(string(b), "oc_placeholder_abc") {
+	if !strings.Contains(string(b), "github_pat_SECRET") || !strings.Contains(string(b), "rnes_placeholder_abc") {
 		t.Errorf("config = %s", b)
 	}
 	none := newSandbox(Options{Sandbox: true}, "")
@@ -497,7 +497,7 @@ func TestSandboxRunGivesTheProxyAndTheSandboxTheSamePlaceholder(t *testing.T) {
 	if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
 		t.Fatal(err)
 	}
-	s.image, s.proxyImage = "oc-sandbox-default:test", "oc-sandbox-proxy:test"
+	s.image, s.proxyImage = "rnes-sandbox-default:test", "rnes-sandbox-proxy:test"
 	if err := s.Run(t.TempDir(), "llama-cpp", "m"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestOpenRouterKeyIsGatedInPolicyEnvAndConfig(t *testing.T) {
 
 	s := newSandbox(Options{Sandbox: true, GitHubToken: "github_pat_SECRET", OpenRouterKey: "sk-or-SECRET"}, "")
 	s.githubPlaceholder, s.openrouterPlaceholder = "ph_gh", "ph_or"
-	s.image, s.generated = "oc-sandbox-default:x", "/tmp/cfg"
+	s.image, s.generated = "rnes-sandbox-default:x", "/tmp/cfg"
 	if !strings.Contains(string(s.policy()), "\nopenrouter.ai:443\n") {
 		t.Errorf("policy lacks openrouter.ai:443:\n%s", s.policy())
 	}
@@ -545,8 +545,8 @@ func TestOpenRouterKeyIsGatedInPolicyEnvAndConfig(t *testing.T) {
 	if err != nil || bytes.Count(b, []byte("\n")) != 1 || !strings.Contains(string(b), "sk-or-SECRET") || !strings.Contains(string(b), "github_pat_SECRET") {
 		t.Errorf("one line with both providers wanted, got %q, %v", b, err)
 	}
-	pn := &proxyNet{network: "oc-net-1", container: "oc-proxy-1"}
-	joined := strings.Join(s.runArgs("oc-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
+	pn := &proxyNet{network: "rnes-net-1", container: "rnes-proxy-1"}
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", "llama-cpp", "m1", pn, false), " ")
 	if strings.Contains(joined, "sk-or-SECRET") || !strings.Contains(joined, "-e OPENROUTER_API_KEY=ph_or") {
 		t.Errorf("run args = %s", joined)
 	}
@@ -559,7 +559,7 @@ func TestSandboxRunSendsTheOpenRouterKeyOnStdinNotArgv(t *testing.T) {
 	if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
 		t.Fatal(err)
 	}
-	s.image, s.proxyImage = "oc-sandbox-default:test", "oc-sandbox-proxy:test"
+	s.image, s.proxyImage = "rnes-sandbox-default:test", "rnes-sandbox-proxy:test"
 	if err := s.Run(t.TempDir(), "llama-cpp", "m"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

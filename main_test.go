@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/df3l0p/oc/internal/harness"
+	"github.com/df3l0p/rnes/internal/harness"
 )
 
 func TestValidateRejectsSandboxOnlyFlagsWithoutSandbox(t *testing.T) {
@@ -77,12 +77,12 @@ func TestListenHost(t *testing.T) {
 }
 
 func TestGitHubTokenFromEnvReadsAndUnsets(t *testing.T) {
-	t.Setenv("OC_GITHUB_TOKEN", "github_pat_x")
+	t.Setenv("RNES_GITHUB_TOKEN", "github_pat_x")
 	if got := githubTokenFromEnv(); got != "github_pat_x" {
 		t.Fatalf("token = %q", got)
 	}
-	if v, ok := os.LookupEnv("OC_GITHUB_TOKEN"); ok {
-		t.Errorf("OC_GITHUB_TOKEN is still set (%q): child processes would inherit it", v)
+	if v, ok := os.LookupEnv("RNES_GITHUB_TOKEN"); ok {
+		t.Errorf("RNES_GITHUB_TOKEN is still set (%q): child processes would inherit it", v)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestValidateRejectsAGitHubTokenWithNoInspect(t *testing.T) {
 func TestValidateRejectsAnUnusableGitHubToken(t *testing.T) {
 	c := cliConfig{sandbox: true, githubToken: "github_pat_x\n"}
 	err := c.validate()
-	if err == nil || !strings.Contains(err.Error(), "OC_GITHUB_TOKEN") || strings.Contains(err.Error(), "github_pat_x") {
-		t.Errorf("err = %v, want one naming OC_GITHUB_TOKEN and not echoing it", err)
+	if err == nil || !strings.Contains(err.Error(), "RNES_GITHUB_TOKEN") || strings.Contains(err.Error(), "github_pat_x") {
+		t.Errorf("err = %v, want one naming RNES_GITHUB_TOKEN and not echoing it", err)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestValidateAcceptsAGitHubTokenWithSandbox(t *testing.T) {
 func TestUsageDocumentsTheGitHubTokenAndTheGhShortcut(t *testing.T) {
 	var buf bytes.Buffer
 	usage(&buf)
-	for _, want := range []string{"Environment:", "OC_GITHUB_TOKEN", "fine-grained", "export OC_GITHUB_TOKEN=$(gh auth token)", "-sandbox"} {
+	for _, want := range []string{"Environment:", "RNES_GITHUB_TOKEN", "fine-grained", "export RNES_GITHUB_TOKEN=$(gh auth token)", "-sandbox"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage is missing %q:\n%s", want, buf.String())
 		}
@@ -141,33 +141,33 @@ func TestSessionCredentialIsKeptOnlyForASession(t *testing.T) {
 		{"sandbox", cliConfig{sandbox: true}, "tok"},
 		{"sandbox-update", cliConfig{sandbox: true, sandboxUpdate: true}, ""},
 	} {
-		if got := tc.cfg.sessionCredential("OC_X", "tok"); got != tc.want {
+		if got := tc.cfg.sessionCredential("RNES_X", "tok"); got != tc.want {
 			t.Errorf("%s: credential = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
 
 func TestOpenRouterKeyFromEnvReadsAndUnsets(t *testing.T) {
-	t.Setenv("OC_OPENROUTER_API_KEY", "sk-or-x")
+	t.Setenv("RNES_OPENROUTER_API_KEY", "sk-or-x")
 	if got := openRouterKeyFromEnv(); got != "sk-or-x" {
 		t.Errorf("got %q", got)
 	}
-	if v, ok := os.LookupEnv("OC_OPENROUTER_API_KEY"); ok {
-		t.Errorf("OC_OPENROUTER_API_KEY is still set (%q): child processes would inherit it", v)
+	if v, ok := os.LookupEnv("RNES_OPENROUTER_API_KEY"); ok {
+		t.Errorf("RNES_OPENROUTER_API_KEY is still set (%q): child processes would inherit it", v)
 	}
 }
 
 func TestValidateRejectsAnOpenRouterKeyWithNoInspect(t *testing.T) {
 	err := cliConfig{sandbox: true, noInspect: true, openrouterKey: "sk-or-x"}.validate()
-	if err == nil || !strings.Contains(err.Error(), "OC_OPENROUTER_API_KEY") {
+	if err == nil || !strings.Contains(err.Error(), "RNES_OPENROUTER_API_KEY") {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestValidateRejectsAnUnusableOpenRouterKey(t *testing.T) {
 	err := cliConfig{sandbox: true, openrouterKey: "sk-or-x\n"}.validate()
-	if err == nil || !strings.Contains(err.Error(), "OC_OPENROUTER_API_KEY") || strings.Contains(err.Error(), "sk-or-x") {
-		t.Errorf("err = %v, want one naming OC_OPENROUTER_API_KEY and not echoing it", err)
+	if err == nil || !strings.Contains(err.Error(), "RNES_OPENROUTER_API_KEY") || strings.Contains(err.Error(), "sk-or-x") {
+		t.Errorf("err = %v, want one naming RNES_OPENROUTER_API_KEY and not echoing it", err)
 	}
 }
 
@@ -184,7 +184,7 @@ func TestActiveProvidersListsOnlyTheSetOnes(t *testing.T) {
 func TestUsageDocumentsTheOpenRouterKey(t *testing.T) {
 	var buf bytes.Buffer
 	usage(&buf)
-	for _, want := range []string{"OC_OPENROUTER_API_KEY", "credit limit", "-sandbox"} {
+	for _, want := range []string{"RNES_OPENROUTER_API_KEY", "credit limit", "-sandbox"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage is missing %q:\n%s", want, buf.String())
 		}
