@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/df3l0p/rnes/internal/opencodeconfig"
+	"github.com/df3l0p/rnes/internal/skills"
 )
 
 // Opencode drives opencode (github.com/anomalyco/opencode) as a Harness. Its
@@ -83,15 +84,81 @@ func (o Opencode) Run(dir, providerKey, modelID string) error {
 	// llama-server models are one /models selection away. providerKey and
 	// modelID are only used by the sandbox, which writes them into its
 	// session-local config.
-	cmd := exec.Command("opencode", ".")
+	args, env := o.launch(dir)
+	cmd := exec.Command("opencode", args...)
 	cmd.Dir = dir
-	// opencode only reads configPath by default when it's left at opencode's
-	// own default global config path, which is exactly what configPath is
-	// here. OPENCODE_CONFIG is set anyway so this keeps working even if a
-	// future rnes option makes configPath configurable again.
-	cmd.Env = append(os.Environ(), "OPENCODE_CONFIG="+o.configPath)
+	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// launch is the opencode argv and environment for a host session. The
+// session-local OPENCODE_CONFIG always: opencode only reads configPath by
+// default when it's left at opencode's own default global config path, which
+// is exactly what configPath is here, so this keeps working even if a future
+// rnes option makes configPath configurable again. Plus the generated skill
+// commands: they ride in OPENCODE_CONFIG_CONTENT (see opencode_commands.go),
+// which only a server started with it in sight reads, so a session with
+// commands runs opencode with --standalone (its own server) instead of the
+// shared background one, which would silently ignore the variable. With no
+// skills to generate commands for, the launch is unchanged.
+//
+// A user's own OPENCODE_CONFIG_CONTENT is never replaced: the commands are
+// merged into it, and the commands it defines count as collisions. When it
+// can't be read as a plain JSON object, rnes leaves it alone and generates
+// nothing.
+func (o Opencode) launch(dir string) ([]string, []string) {
+	env := append(os.Environ(), "OPENCODE_CONFIG="+o.configPath)
+	plain := []string{"."}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rnes: warning: no skill commands: resolving home directory: %v\n", err)
+		return plain, env
+	}
+	scope := commandScope{cwd: dir, globalDir: o.globalDir()}
+	existing := os.Getenv(inlineConfigEnv)
+	if existing != "" {
+		_, commands, err := parseInline(existing)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "rnes: warning: no skill commands: %s is set but isn't a plain JSON object (%v), and rnes won't replace it\n", inlineConfigEnv, err)
+			return plain, env
+		}
+		scope.extra = make(map[string]string, len(commands))
+		for name := range commands {
+			scope.extra[name] = inlineConfigEnv
+		}
+	}
+	found := skills.DiscoverAll(home, dir)
+	names := make([]string, 0, len(found))
+	for _, s := range found {
+		names = append(names, s.Name)
+	}
+	names, warns := commandNames(scope, names)
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "rnes: warning: %s\n", w)
+	}
+	if len(names) == 0 {
+		return plain, env
+	}
+	content := configContent(names)
+	if existing != "" {
+		if content, err = mergeConfigContent(existing, names); err != nil {
+			fmt.Fprintf(os.Stderr, "rnes: warning: no skill commands: merging into %s: %v\n", inlineConfigEnv, err)
+			return plain, env
+		}
+	}
+	fmt.Fprintf(os.Stderr, "rnes: skill commands: /%s\n", strings.Join(names, ", /"))
+	return []string{"--standalone", "."}, withEnv(env, inlineConfigEnv, content)
+}
+
+// globalDir is the opencode config directory holding the user's global
+// commands. OPENCODE_CONFIG_DIR replaces opencode's default one (the CLI
+// points its global config directory at it), as it does for global skills.
+func (o Opencode) globalDir() string {
+	if d := os.Getenv("OPENCODE_CONFIG_DIR"); d != "" {
+		return d
+	}
+	return filepath.Dir(o.configPath)
 }
