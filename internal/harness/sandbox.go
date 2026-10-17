@@ -299,7 +299,7 @@ func (s *Sandbox) Configure(providerKey, baseURL string, modelIDs []string) erro
 			return err
 		}
 		if dropped {
-			fmt.Fprintln(os.Stderr, "rnes: warning: removed provider.openrouter.options.apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_OPENROUTER_API_KEY instead")
+			fmt.Fprintln(os.Stderr, "rnes: warning: removed the openrouter apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_OPENROUTER_API_KEY instead")
 		}
 	}
 	// CreateTemp creates the file 0600; the container runs as the same uid.
@@ -323,6 +323,9 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 	defer os.Remove(s.generated)
 	if s.image == "" || s.proxyImage == "" {
 		return fmt.Errorf("sandbox: Prepare must be called before Run")
+	}
+	if err := s.applyModel(providerKey, modelID); err != nil {
+		return err
 	}
 
 	if len(s.skills) > 0 {
@@ -378,11 +381,30 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 	// daemon noticing; --rm covers the normal path.
 	defer exec.Command("docker", "rm", "-f", name).Run()
 
-	cmd := exec.Command("docker", s.runArgs(name, dir, providerKey, modelID, pn, stdinIsTTY())...)
+	cmd := exec.Command("docker", s.runArgs(name, dir, pn, stdinIsTTY())...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// applyModel makes the session start on providerKey/modelID. The harness's
+// session UI may not accept a model flag, so the model rides in the
+// generated config's top-level "model" default. The config is session-local
+// and mounted read-only into the container, so nothing outlives the session.
+func (s *Sandbox) applyModel(providerKey, modelID string) error {
+	raw, err := os.ReadFile(s.generated)
+	if err != nil {
+		return fmt.Errorf("reading generated config: %w", err)
+	}
+	raw, err = opencodeconfig.SetModel(raw, providerKey+"/"+modelID)
+	if err != nil {
+		return fmt.Errorf("setting the sandbox's model: %w", err)
+	}
+	if err := os.WriteFile(s.generated, raw, 0o600); err != nil {
+		return fmt.Errorf("writing generated config: %w", err)
+	}
+	return nil
 }
 
 // policy is this session's proxy allow-list: the shipped defaults plus
@@ -408,7 +430,7 @@ func (s *Sandbox) policy() []byte {
 // reaches pn's network, and all HTTP(S) traffic is forced through pn's
 // proxy container. Both spellings of the proxy variables are set: curl, for
 // one, ignores uppercase HTTP_PROXY.
-func (s *Sandbox) runArgs(name, dir, providerKey, modelID string, pn *proxyNet, tty bool) []string {
+func (s *Sandbox) runArgs(name, dir string, pn *proxyNet, tty bool) []string {
 	flags := "-i"
 	if tty {
 		flags = "-it"
@@ -453,8 +475,8 @@ func (s *Sandbox) runArgs(name, dir, providerKey, modelID string, pn *proxyNet, 
 	return append(args,
 		"-w", containerWorkdir,
 		s.image,
-		// -m selects the model for this session only, as in host mode.
-		"-m", providerKey+"/"+modelID, ".",
+		// The model comes from the generated config's "model" default.
+		".",
 	)
 }
 

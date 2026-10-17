@@ -12,12 +12,14 @@ import (
 )
 
 // Provider is the shape opencode expects for a custom OpenAI-compatible
-// provider entry under the top-level "provider" key.
+// provider entry under the top-level "providers" key. Package is the
+// provider's npm package, prefixed with "aisdk:" when it is an AI SDK
+// package (as @ai-sdk/openai-compatible is).
 type Provider struct {
-	NPM     string                 `json:"npm"`
-	Name    string                 `json:"name"`
-	Options map[string]interface{} `json:"options"`
-	Models  map[string]interface{} `json:"models"`
+	Package  string                 `json:"package"`
+	Name     string                 `json:"name"`
+	Settings map[string]interface{} `json:"settings"`
+	Models   map[string]interface{} `json:"models"`
 }
 
 // Merge reads the JSONC config at path (treating a missing file as "{}"),
@@ -104,7 +106,7 @@ func render(raw []byte, providerKey string, provider Provider) ([]byte, error) {
 		}
 	}
 
-	providers, _ := config["provider"].(map[string]interface{})
+	providers, _ := config["providers"].(map[string]interface{})
 	if providers == nil {
 		providers = map[string]interface{}{}
 	}
@@ -114,7 +116,7 @@ func render(raw []byte, providerKey string, provider Provider) ([]byte, error) {
 		return nil, fmt.Errorf("encoding provider block: %w", err)
 	}
 	providers[providerKey] = providerBlock
-	config["provider"] = providers
+	config["providers"] = providers
 
 	out, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -191,23 +193,56 @@ func stripJSONComments(src []byte) []byte {
 	return out
 }
 
-// DropProviderOption removes provider[providerKey].options[option] from the
-// JSON config in raw, reporting whether it was there. Other keys are untouched.
+// DropProviderOption removes providers[providerKey].settings[option] from
+// the JSON config in raw, reporting whether it was there. It also removes
+// the legacy provider[providerKey].options[option] written before the v2
+// config migration: the named option is what the sandbox must not see (an
+// openrouter apiKey), and a config last written by the v1-era rnes would
+// otherwise carry it into the container. Other keys are untouched.
 func DropProviderOption(raw []byte, providerKey, option string) ([]byte, bool, error) {
 	var config map[string]interface{}
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return nil, false, fmt.Errorf("parsing: %w", err)
 	}
-	providers, _ := config["provider"].(map[string]interface{})
-	block, _ := providers[providerKey].(map[string]interface{})
-	options, _ := block["options"].(map[string]interface{})
-	if _, ok := options[option]; !ok {
+	// Both locations are always tried: a config can carry the option in each.
+	fromSettings := dropNested(config, "providers", providerKey, "settings", option)
+	fromOptions := dropNested(config, "provider", providerKey, "options", option)
+	if !fromSettings && !fromOptions {
 		return raw, false, nil
 	}
-	delete(options, option)
 	out, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return nil, false, fmt.Errorf("encoding: %w", err)
 	}
 	return append(out, '\n'), true, nil
+}
+
+// dropNested deletes config[top][providerKey][group][option], reporting
+// whether it was there. A missing level at any depth counts as absent.
+func dropNested(config map[string]interface{}, top, providerKey, group, option string) bool {
+	providers, _ := config[top].(map[string]interface{})
+	block, _ := providers[providerKey].(map[string]interface{})
+	values, _ := block[group].(map[string]interface{})
+	if _, ok := values[option]; !ok {
+		return false
+	}
+	delete(values, option)
+	return true
+}
+
+// SetModel sets the top-level "model" default in the JSON config in raw, in
+// opencode's "provider/model" format. The full TUI takes no model flag, so
+// this is how a session starts on a chosen model without touching any
+// config that outlives it.
+func SetModel(raw []byte, model string) ([]byte, error) {
+	var config map[string]interface{}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, fmt.Errorf("parsing: %w", err)
+	}
+	config["model"] = model
+	out, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encoding: %w", err)
+	}
+	return append(out, '\n'), nil
 }
