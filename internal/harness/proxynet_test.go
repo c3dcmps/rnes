@@ -67,6 +67,9 @@ func TestStartProxyNetCreatesNetworkThenContainerThenConnectsBridge(t *testing.T
 			if !strings.Contains(c, "--label "+label) {
 				t.Errorf("proxy run args missing the session label: %s", c)
 			}
+			if !strings.Contains(c, "--cap-drop=ALL") || !strings.Contains(c, "--security-opt=no-new-privileges:true") {
+				t.Errorf("proxy run args missing privilege hardening: %s", c)
+			}
 			if !strings.Contains(c, "--add-host host.docker.internal:172.17.0.1") {
 				t.Errorf("proxy run args missing the host add-host: %s", c)
 			}
@@ -182,6 +185,9 @@ func TestDefaultPolicyParses(t *testing.T) {
 	for _, want := range []string{
 		"registry.npmjs.org:443", "github.com:443", "models.dev:443",
 		"api.github.com:443",
+		"proxy.golang.org:443", "sum.golang.org:443",
+		"pypi.org:443", "files.pythonhosted.org:443",
+		"crates.io:443", "static.crates.io:443",
 	} {
 		if !pol.Allows(want) {
 			t.Errorf("default policy doesn't allow %s", want)
@@ -257,14 +263,26 @@ func TestStartProxyNetFailsWithTheProxyOutputWhenItExitsAtStartup(t *testing.T) 
 
 func TestStartProxyNetWaitsForTheProxyToListen(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
+	t.Setenv("TMPDIR", t.TempDir())
 	p, err := startProxyNet("rnes-proxy:test", "172.17.0.1", nil, false, nil)
 	if err != nil {
 		t.Fatalf("startProxyNet: %v", err)
 	}
 	defer p.stop()
-	got := calls(t, logPath)
-	if last := got[len(got)-1]; last != "logs "+p.container {
-		t.Errorf("last docker call = %q, want the readiness check `logs %s` after connecting", last, p.container)
+	connectIdx, readyIdx := -1, -1
+	for i, c := range calls(t, logPath) {
+		switch {
+		case strings.HasPrefix(c, "network connect "+p.network+" "+p.container):
+			connectIdx = i
+		case c == "logs "+p.container:
+			readyIdx = i
+		}
+	}
+	if connectIdx < 0 || readyIdx < 0 || readyIdx < connectIdx {
+		t.Errorf("want readiness check `logs %s` after `network connect`; calls = %v", p.container, calls(t, logPath))
+	}
+	if p.logFile == "" {
+		t.Errorf("expected proxy log file even without inspect")
 	}
 }
 

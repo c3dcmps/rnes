@@ -275,3 +275,72 @@ func TestResolveSkillsPrintsWarningsAndResolves(t *testing.T) {
 		t.Errorf("-skills-dir alone: %v, output %q", err, buf.String())
 	}
 }
+
+func TestValidateRejectsGeneratePolicyWithSandboxUpdate(t *testing.T) {
+	if err := (cliConfig{generatePolicy: true}).validate(); err != nil {
+		t.Errorf("generatePolicy alone: %v", err)
+	}
+	if err := (cliConfig{generatePolicy: true, sandboxUpdate: true, sandbox: true, build: true}).validate(); err == nil {
+		t.Error("expected validate error when combining -generate-policy and -sandbox-update")
+	}
+	if got := (cliConfig{generatePolicy: true}).sessionCredential("RNES_GITHUB_TOKEN", "github_pat_x"); got != "" {
+		t.Errorf("sessionCredential with -generate-policy = %q, want empty", got)
+	}
+}
+
+func TestResolvePolicyHandlesHostAndSandbox(t *testing.T) {
+	// Without .rnes/policy.txt: sandbox creates .rnes/ and returns nil policy.
+	cwd := t.TempDir()
+	var buf bytes.Buffer
+	cfg := cliConfig{sandbox: true, githubToken: "github_pat_x"}
+	raw, err := resolvePolicy(cfg, cwd, &buf)
+	if err != nil || raw != nil || buf.Len() != 0 {
+		t.Fatalf("no policy file = (raw=%v, err=%v, out=%q)", raw, err, buf.String())
+	}
+	if fi, err := os.Lstat(filepath.Join(cwd, ".rnes")); err != nil || !fi.IsDir() {
+		t.Fatalf("expected .rnes dir created for sandbox, fi=%v err=%v", fi, err)
+	}
+
+	// Generated starter policy prints active hosts.
+	if _, err := harness.GeneratePolicy(cwd); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = resolvePolicy(cfg, cwd, &buf)
+	if err != nil || raw == nil {
+		t.Fatalf("generated policy = (rawNil=%v, err=%v)", raw == nil, err)
+	}
+	if !strings.Contains(buf.String(), "rnes: sandbox policy (.rnes/policy.txt):") {
+		t.Errorf("startup output missing policy line: %q", buf.String())
+	}
+
+	// Host mode (no -sandbox) prints a note and leaves .rnes untouched.
+	buf.Reset()
+	raw, err = resolvePolicy(cliConfig{}, cwd, &buf)
+	if err != nil || raw != nil || !strings.Contains(buf.String(), "ignored without -sandbox") {
+		t.Errorf("host mode with policy file = (raw=%v, err=%v, out=%q)", raw, err, buf.String())
+	}
+
+	// Custom policy prints only the configured hosts (the proxy blocks any
+	// omitted provider hosts on its own, without per-provider checks in rnes).
+	buf.Reset()
+	if err := os.WriteFile(filepath.Join(cwd, ".rnes", "policy.txt"), []byte("pypi.org:443\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = resolvePolicy(cfg, cwd, &buf)
+	if err != nil || string(raw) != "pypi.org:443\n" {
+		t.Fatalf("pypi policy = (%q, %v)", raw, err)
+	}
+	if !strings.Contains(buf.String(), "pypi.org:443") || strings.Contains(buf.String(), "warning:") {
+		t.Errorf("output = %q", buf.String())
+	}
+
+	// Empty policy prints "none (model server only)".
+	buf.Reset()
+	if err := os.WriteFile(filepath.Join(cwd, ".rnes", "policy.txt"), []byte("# model server only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = resolvePolicy(cliConfig{sandbox: true}, cwd, &buf)
+	if err != nil || raw == nil || !strings.Contains(buf.String(), "none (model server only)") {
+		t.Errorf("empty policy = (rawNil=%v, err=%v, out=%q)", raw == nil, err, buf.String())
+	}
+}
