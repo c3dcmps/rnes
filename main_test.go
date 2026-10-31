@@ -553,3 +553,18 @@ func TestResolveSkillsPrefersTheActiveHarnessGlobalFolder(t *testing.T) {
 		}
 	}
 }
+
+func TestWebAndNoWebAreMutuallyExclusive(t *testing.T) {
+	if err := (cliConfig{web: true, noWeb: true, harness: "opencode"}).validate(); err == nil || !strings.Contains(err.Error(), "-web") {
+		t.Errorf("validate(-web -no-web) = %v, want an error", err)
+	}
+	if err := (cliConfig{web: true, harness: "opencode"}).validate(); err != nil {
+		t.Errorf("validate(-web) = %v", err)
+	}
+	if err := (cliConfig{noWeb: true, harness: "opencode"}).validate(); err != nil {
+		t.Errorf("validate(-no-web) = %v", err)
+	}
+	if err := (cliConfig{web: true, harness: "agy"}).validate(); err == nil || !strings.Contains(err.Error(), "-harness opencode") {
+		t.Errorf("validate(-web with agy) = %v, want an error", err)
+	}
+}

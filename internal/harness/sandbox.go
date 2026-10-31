@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/df3l0p/rnes/images"
@@ -96,6 +97,9 @@ type sandboxProfile struct {
 	// generateSkillCommands enables opencode's synthetic /<skill> command
 	// generation into skillsConfigHome.
 	generateSkillCommands bool
+	// webUI reports whether the harness serves opencode's web UI, which rnes
+	// can expose on a loopback port and open in the browser.
+	webUI bool
 	// containerArgs returns the arguments passed to the image's ENTRYPOINT.
 	containerArgs func(modelID string, modelSet bool, extraArgs []string) []string
 }
@@ -134,6 +138,15 @@ type Sandbox struct {
 	// inspect has the proxy terminate TLS for the policy's explicit hosts
 	// (see Options.NoInspect).
 	inspect bool
+	// webExpose serves the web UI for the session through the proxy's
+	// forwarder; the forward has to exist from launch, so it can't be added
+	// later without restarting the session.
+	webExpose bool
+	// openWeb opens the web UI in the browser at startup.
+	openWeb bool
+	// webPassword is the server password for this session's web UI, set by
+	// Run when web is on.
+	webPassword string
 	// githubToken is the real token, held only to hand to the proxy; the sandbox
 	// container never sees it. githubPlaceholder stands in for it there.
 	githubToken       string
@@ -227,6 +240,8 @@ func newSandboxWithProfile(opts Options, profile sandboxProfile) *Sandbox {
 		build:         opts.Build,
 		allNet:        opts.AllNet,
 		inspect:       !opts.NoInspect,
+		webExpose:     opts.WebExpose && profile.webUI,
+		openWeb:       opts.WebOpen && profile.webUI,
 		githubToken:   opts.GitHubToken,
 		openrouterKey: opts.OpenRouterKey,
 		skills:        opts.Skills,
@@ -522,7 +537,25 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 	if err != nil {
 		return err
 	}
-	pn, err := startProxyNet(s.proxyImage, s.hostIP, s.policy(), s.inspect, providers)
+	// Unique per invocation so parallel sessions never collide, whatever port
+	// they share. Named before the proxy starts because the web forward
+	// targets this container by name.
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("generating container name: %w", err)
+	}
+	name := fmt.Sprintf("rnes-%d-%s", os.Getpid(), hex.EncodeToString(suffix[:]))
+
+	webTarget := ""
+	if s.webExpose {
+		password, err := newWebPassword()
+		if err != nil {
+			return err
+		}
+		s.webPassword = password
+		webTarget = fmt.Sprintf("%s:%d", name, webSandboxPort)
+	}
+	pn, err := startProxyNetWeb(s.proxyImage, s.hostIP, s.policy(), s.inspect, providers, webTarget)
 	if err != nil {
 		return fmt.Errorf("starting sandbox proxy: %w", err)
 	}
@@ -532,14 +565,6 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 		fmt.Fprintf(os.Stderr, "rnes: sandbox proxy log: %s\n", pn.logFile)
 	}
 
-	// Unique per invocation so parallel sessions never collide, whatever port
-	// they share.
-	var suffix [4]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return fmt.Errorf("generating container name: %w", err)
-	}
-	name := fmt.Sprintf("rnes-%d-%s", os.Getpid(), hex.EncodeToString(suffix[:]))
-
 	// Backstop for a container left behind if docker's client dies without the
 	// daemon noticing; --rm covers the normal path.
 	defer exec.Command("docker", "rm", "-f", name).Run()
@@ -548,7 +573,36 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	runErr := cmd.Run()
+	// Everything rnes prints about the web UI happens here, before the TUI
+	// takes the terminal: a write from the pairing goroutine below would land
+	// in the middle of the alternate screen. The address and password are
+	// durable for the session, whereas a pairing link expires in five minutes.
+	linkPath := ""
+	if s.webExpose {
+		fmt.Fprintf(os.Stderr, "rnes: web UI: %s (password: %s)\n", webBaseURL(pn.forwardHostPort), s.webPassword)
+		if s.openWeb {
+			linkPath = filepath.Join(os.TempDir(), fmt.Sprintf("rnes-web-%d.link", os.Getpid()))
+			os.Remove(linkPath) // stale files from a recycled pid
+			os.Remove(linkPath + ".log")
+			fmt.Fprintf(os.Stderr, "rnes: opening it in your browser; the one-time link is also written to %s\n", linkPath)
+		} else {
+			fmt.Fprintln(os.Stderr, "rnes: note: open that address in a browser and choose \"Use password\"")
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if s.webExpose && s.openWeb {
+		go s.exposeWeb(pn.forwardHostPort, linkPath)
+	}
+	runErr := cmd.Wait()
+	if linkPath != "" {
+		// Safe now: the TUI has exited. Report a failed pairing, which the
+		// goroutine wrote here instead of into the live screen.
+		if data, err := os.ReadFile(linkPath + ".log"); err == nil && len(data) > 0 {
+			fmt.Fprintf(os.Stderr, "rnes: web UI: %s\n", strings.TrimSpace(string(data)))
+		}
+	}
 
 	// Stop the proxy before reading its log so the follower has flushed any
 	// final lines; defer pn.stop() above remains a no-op backstop.
@@ -557,6 +611,37 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 		fmt.Fprintf(os.Stderr, "rnes: proxy blocked: %s (see %s)\n", summary, pn.logFile)
 	}
 	return runErr
+}
+
+// exposeWeb waits for the container's opencode server (through the proxy's
+// published forward), pairs, and opens the web UI. It runs beside the
+// container and never writes to the terminal: the TUI owns it by now. The
+// link goes to linkPath for a confirmation, and failures to linkPath+".log",
+// which Run prints after the TUI exits.
+func (s *Sandbox) exposeWeb(hostPort int, linkPath string) {
+	fail := func(msg string) {
+		_ = os.WriteFile(linkPath+".log", []byte(msg+"\n"), 0o600)
+	}
+	if hostPort == 0 {
+		fail("couldn't open it: the web forward has no host port")
+		return
+	}
+	base := webBaseURL(hostPort)
+	if err := waitWebReady(base, s.webPassword, webReadyTimeout, nil); err != nil {
+		fail(fmt.Sprintf("couldn't open it: the sandbox's web server didn't answer: %v (its log is /tmp/rnes-opencode-serve.log in the container)", err))
+		return
+	}
+	link, err := pairLink(base, s.webPassword)
+	if err != nil {
+		fail(fmt.Sprintf("couldn't pair it: %v", err))
+		return
+	}
+	if err := os.WriteFile(linkPath, []byte(link+"\n"), 0o600); err != nil {
+		fail(fmt.Sprintf("couldn't record the link: %v", err))
+		return
+	}
+	// Best effort: the address and password printed above work either way.
+	_ = openBrowser(link)
 }
 
 // applyModel makes the session start on providerKey/modelID. The harness's
@@ -669,12 +754,62 @@ func (s *Sandbox) runArgsForModel(name, dir string, pn *proxyNet, tty bool, mode
 	if s.openrouterPlaceholder != "" && s.profile.openRouterEnv != "" {
 		args = append(args, "-e", s.profile.openRouterEnv+"="+s.openrouterPlaceholder)
 	}
+	if s.webExpose {
+		args = append(args, "-e", webPasswordEnv+"="+s.webPassword)
+	}
 	args = append(args, s.skillMounts()...)
-	args = append(args, "-w", containerWorkdir, s.image)
+	args = append(args, "-w", containerWorkdir)
+	if s.webExpose {
+		// The server runs in the background (its log must not fight the TUI
+		// for the terminal) and the TUI is a client of it, so both share one
+		// session, exactly like host mode.
+		return append(args,
+			"--entrypoint", "sh",
+			s.image, "-c", s.webScript(),
+		)
+	}
+	args = append(args, s.image)
 	if s.profile.containerArgs != nil {
 		args = append(args, s.profile.containerArgs(modelID, s.modelSet, s.extraArgs)...)
 	}
 	return args
+}
+
+// webScript is the container command for a web session: start the server on
+// the sandbox network (the proxy's forwarder dials it by container name), wait
+// until it answers, then run the TUI against it. Without the wait the TUI races
+// the server and exits with "Could not reach server".
+func (s *Sandbox) webScript() string {
+	// node is part of the image (base.Dockerfile is FROM node). "/" is the
+	// public web app, so the probe needs no password.
+	probe := `node -e 'fetch("http://127.0.0.1:` + strconv.Itoa(webSandboxPort) + `/").then(()=>process.exit(0),()=>process.exit(1))'`
+	return strings.Join([]string{
+		"opencode serve --hostname 0.0.0.0 --port " + strconv.Itoa(webSandboxPort) + " >/tmp/rnes-opencode-serve.log 2>&1 &",
+		"i=0;",
+		"while [ $i -lt 300 ]; do",
+		"if " + probe + " 2>/dev/null; then break; fi;",
+		"i=$((i+1)); sleep 0.2;",
+		"done;",
+		"if [ $i -ge 300 ]; then echo 'rnes: the sandbox web server did not start:' >&2; cat /tmp/rnes-opencode-serve.log >&2; exit 1; fi;",
+		"exec opencode --server http://127.0.0.1:" + strconv.Itoa(webSandboxPort) + " ." + s.quotedExtraArgs(),
+	}, " ")
+}
+
+// quotedExtraArgs is the argv passthrough (rnes -- ...), shell-quoted for the
+// sh -c command line the web script runs. Without this, -web would silently
+// drop arguments that a plain sandbox session passes to the agent.
+func (s *Sandbox) quotedExtraArgs() string {
+	var b strings.Builder
+	for _, a := range s.extraArgs {
+		b.WriteString(" ")
+		b.WriteString(shellQuote(a))
+	}
+	return b.String()
+}
+
+// shellQuote quotes one argument for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // newPlaceholder returns an opaque stand-in for a credential.

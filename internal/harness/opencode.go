@@ -19,6 +19,9 @@ import (
 type Opencode struct {
 	configPath string
 	args       []string
+	// openWeb starts a known server, opens the web UI, and runs the TUI as a
+	// client of it, so both share one session.
+	openWeb bool
 }
 
 func newOpencode(opts Options) (Harness, error) {
@@ -30,7 +33,7 @@ func newOpencode(opts Options) (Harness, error) {
 	if opts.Sandbox {
 		return newSandbox(opts, configPath), nil
 	}
-	return Opencode{configPath: configPath, args: opts.Args}, nil
+	return Opencode{configPath: configPath, args: opts.Args, openWeb: opts.WebOpen}, nil
 }
 
 func opencodeProfile(hostConfig string) sandboxProfile {
@@ -43,6 +46,7 @@ func opencodeProfile(hostConfig string) sandboxProfile {
 		skillsConfigHome:      containerConfigHome,
 		skillsRelDir:          "opencode/skills",
 		generateSkillCommands: true,
+		webUI:                 true,
 		containerArgs: func(_ string, _ bool, extraArgs []string) []string {
 			// The model comes from the generated config's "model" default.
 			return append([]string{"."}, extraArgs...)
@@ -103,7 +107,71 @@ func (o Opencode) Run(dir, providerKey, modelID string) error {
 	// modelID are only used by the sandbox, which writes them into its
 	// session-local config.
 	args, env := o.launch(dir)
+	if o.openWeb {
+		return o.runWithWeb(dir, env)
+	}
 	cmd := exec.Command("opencode", args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runWithWeb starts opencode's server with a known port and password, opens a
+// pairing link in the browser, then runs the TUI connected to that same
+// server. Both are clients of one server, so they see the same live session.
+func (o Opencode) runWithWeb(dir string, env []string) error {
+	password, err := newWebPassword()
+	if err != nil {
+		return err
+	}
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	env = withEnv(env, webPasswordEnv, password)
+	base := webBaseURL(port)
+
+	// The server's log must not share the terminal with the TUI.
+	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("rnes-opencode-serve-%d.log", os.Getpid()))
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating the web server log: %w", err)
+	}
+	defer logFile.Close()
+
+	server := exec.Command("opencode", serveArgs(port)...)
+	server.Dir = dir
+	server.Env = env
+	server.Stdout, server.Stderr = logFile, logFile
+	if err := server.Start(); err != nil {
+		return fmt.Errorf("starting the web server: %w", err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		server.Wait()
+		close(exited)
+	}()
+	defer func() {
+		if server.Process != nil {
+			server.Process.Kill()
+		}
+		<-exited
+	}()
+
+	if err := waitWebReady(base, password, webReadyTimeout, exited); err != nil {
+		return fmt.Errorf("%w (see log: %s)", err, logPath)
+	}
+	link, err := pairLink(base, password)
+	if err != nil {
+		return fmt.Errorf("%w (see log: %s)", err, logPath)
+	}
+	fmt.Fprintf(os.Stderr, "rnes: web server: %s (log: %s)\n", base, logPath)
+	printWebLink(link)
+
+	cmd := exec.Command("opencode", append(tuiServerArgs(base), o.args...)...)
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
