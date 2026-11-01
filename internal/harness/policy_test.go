@@ -124,7 +124,9 @@ func TestLoadProjectPolicyAllowingPrivate(t *testing.T) {
 	}
 
 	// Without -allow-private the entry is skipped and reported: the policy
-	// must not grant it, and skipPrivate names it so the CLI can warn.
+	// must not grant it, and skipPrivate names it so the CLI can warn. raw
+	// must have the line removed: it feeds the session proxy, which parses
+	// in internal mode and would honor the entry as written.
 	raw, pol, found, skip, err := LoadProjectPolicy(cwd)
 	if err != nil || !found {
 		t.Fatalf("LoadProjectPolicy: found=%v err=%v", found, err)
@@ -135,15 +137,25 @@ func TestLoadProjectPolicyAllowingPrivate(t *testing.T) {
 	if pol.AllowsPrivate("host.docker.internal:8080") {
 		t.Errorf("skipped entry must not be allowed private: %+v", pol)
 	}
+	if strings.Contains(string(raw), "private host.docker.internal:8080") {
+		t.Errorf("raw must not still contain the skipped line: %q", raw)
+	}
+	merged, err := proxy.ParsePolicy(bytes.NewReader(newSandbox(Options{Sandbox: true, Policy: raw}, "").policy()))
+	if err != nil {
+		t.Fatalf("ParsePolicy(merged): %v", err)
+	}
+	if merged.Explicit("host.docker.internal:8080") || merged.AllowsPrivate("host.docker.internal:8080") {
+		t.Errorf("merged session policy must not grant the skipped host: %+v", merged)
+	}
 
 	// With the Allowing variant the entry is accepted and marked private,
-	// nothing skipped.
+	// nothing skipped and the line kept in raw.
 	raw, pol, found, skip, err = LoadProjectPolicyAllowingPrivate(cwd)
 	if err != nil || !found {
 		t.Fatalf("LoadProjectPolicyAllowingPrivate: found=%v err=%v", found, err)
 	}
-	if raw == nil {
-		t.Fatal("LoadProjectPolicyAllowingPrivate raw = nil")
+	if raw == nil || !strings.Contains(string(raw), "private host.docker.internal:8080") {
+		t.Fatalf("LoadProjectPolicyAllowingPrivate raw = %q", raw)
 	}
 	if len(skip) != 0 {
 		t.Errorf("skipPrivate = %v, want none", skip)

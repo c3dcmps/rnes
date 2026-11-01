@@ -85,8 +85,8 @@ func HasProjectPolicy(cwd string) bool {
 
 // LoadProjectPolicy reads and validates <cwd>/.rnes/policy.txt when present.
 // "private host:port" entries are skipped and their host:ports returned in
-// skipPrivate (the CLI warns about them): without -allow-private they grant
-// nothing, and egress to those addresses stays blocked like any non-public
+// skipPrivate (the CLI warns about them); the returned raw has their lines
+// removed, so egress to those addresses stays blocked like any non-public
 // route. LoadProjectPolicyAllowingPrivate accepts them (the policy side of
 // the -allow-private flag). When the file is absent, found is false and raw
 // is nil. Both .rnes and .rnes/policy.txt are checked with Lstat so symlinks
@@ -145,7 +145,30 @@ func loadProjectPolicy(cwd string, allowPrivate bool) (raw []byte, pol proxy.Pol
 	if err != nil {
 		return nil, proxy.Policy{}, false, nil, fmt.Errorf("parsing %s: %w", ProjectPolicyRel, err)
 	}
+	if !allowPrivate && len(skipped) > 0 {
+		// raw feeds the session proxy, which parses it in internal mode and
+		// would honor those very "private" lines; without -allow-private they
+		// must not reach it in any form.
+		raw = dropPrivateLines(raw)
+	}
 	return raw, pol, true, skipped, nil
+}
+
+// dropPrivateLines removes the lines that read as "private host:port" entries
+// (after comment cutting and trimming) from raw.
+func dropPrivateLines(raw []byte) []byte {
+	var kept []string
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		code, _, _ := strings.Cut(line, "#")
+		if strings.HasPrefix(strings.TrimSpace(code), "private ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		return []byte{}
+	}
+	return []byte(strings.Join(kept, "\n") + "\n")
 }
 
 // BlockedSummary reads a proxy log file and summarizes any "rnes-proxy: denied
