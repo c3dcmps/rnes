@@ -43,6 +43,7 @@ func opencodeProfile(hostConfig string) sandboxProfile {
 		usesGeneratedConfig:   true,
 		hostConfig:            hostConfig,
 		openRouterEnv:         "OPENROUTER_API_KEY",
+		mistralEnv:            "MISTRAL_API_KEY",
 		skillsConfigHome:      containerConfigHome,
 		skillsRelDir:          "opencode/skills",
 		generateSkillCommands: true,

@@ -147,7 +147,7 @@ func TestValidateAcceptsAGitHubTokenWithSandbox(t *testing.T) {
 func TestUsageDocumentsTheGitHubTokenAndTheGhShortcut(t *testing.T) {
 	var buf bytes.Buffer
 	usage(&buf)
-	for _, want := range []string{"Environment:", "RNES_GITHUB_TOKEN", "fine-grained", "export RNES_GITHUB_TOKEN=$(gh auth token)", "-sandbox"} {
+	for _, want := range []string{"Environment:", "RNES_GITHUB_TOKEN", "fine-grained", "export RNES_GITHUB_TOKEN=$(gh auth token)", "RNES_OPENROUTER_API_KEY", "RNES_MISTRAL_API_KEY", "export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.openrouter.key')", "export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)", "https://chat.mistral.ai/code/extensions", "-sandbox"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage is missing %q:\n%s", want, buf.String())
 		}
@@ -201,6 +201,30 @@ func TestValidateRejectsAnOpenRouterKeyWithNoInspect(t *testing.T) {
 	}
 }
 
+func TestMistralKeyFromEnvReadsAndUnsets(t *testing.T) {
+	t.Setenv("RNES_MISTRAL_API_KEY", "mis-x")
+	if got := mistralKeyFromEnv(); got != "mis-x" {
+		t.Errorf("got %q", got)
+	}
+	if v, ok := os.LookupEnv("RNES_MISTRAL_API_KEY"); ok {
+		t.Errorf("RNES_MISTRAL_API_KEY is still set (%q): child processes would inherit it", v)
+	}
+}
+
+func TestValidateRejectsAMistralKeyWithNoInspect(t *testing.T) {
+	err := cliConfig{sandbox: true, noInspect: true, mistralKey: "mis-x"}.validate()
+	if err == nil || !strings.Contains(err.Error(), "RNES_MISTRAL_API_KEY") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestValidateRejectsAnUnusableMistralKey(t *testing.T) {
+	err := cliConfig{sandbox: true, mistralKey: "mis-x\n"}.validate()
+	if err == nil || !strings.Contains(err.Error(), "RNES_MISTRAL_API_KEY") || strings.Contains(err.Error(), "mis-x") {
+		t.Errorf("err = %v, want one naming RNES_MISTRAL_API_KEY and not echoing it", err)
+	}
+}
+
 func TestValidateRejectsAnUnusableOpenRouterKey(t *testing.T) {
 	err := cliConfig{sandbox: true, openrouterKey: "sk-or-x\n"}.validate()
 	if err == nil || !strings.Contains(err.Error(), "RNES_OPENROUTER_API_KEY") || strings.Contains(err.Error(), "sk-or-x") {
@@ -225,6 +249,19 @@ func TestValidateIgnoresTheOpenRouterKeyForACloudHarness(t *testing.T) {
 	if err := (cliConfig{sandbox: true, harness: "opencode", noInspect: true, openrouterKey: "sk-or-x"}).validate(); err == nil {
 		t.Error("opencode with -no-inspect and an OpenRouter key must still be rejected")
 	}
+	// The same holds for the Mistral key.
+	for _, cfg := range []cliConfig{
+		{sandbox: true, harness: "agy", mistralKey: "mis-x"},
+		{sandbox: true, harness: "agy", noInspect: true, mistralKey: "mis-x"},
+		{sandbox: true, harness: "agy", mistralKey: "mis-x\n"},
+	} {
+		if err := cfg.validate(); err != nil {
+			t.Errorf("validate(%+v) = %v, want nil", cfg, err)
+		}
+	}
+	if err := (cliConfig{sandbox: true, harness: "opencode", noInspect: true, mistralKey: "mis-x"}).validate(); err == nil {
+		t.Error("opencode with -no-inspect and a Mistral key must still be rejected")
+	}
 }
 
 func TestActiveProvidersListsOnlyTheSetOnes(t *testing.T) {
@@ -235,12 +272,16 @@ func TestActiveProvidersListsOnlyTheSetOnes(t *testing.T) {
 	if strings.Join(got, ",") != "github,openrouter" {
 		t.Errorf("both set: %v", got)
 	}
+	got = activeProviders(cliConfig{mistralKey: "c"})
+	if strings.Join(got, ",") != "mistral" {
+		t.Errorf("mistral set: %v", got)
+	}
 }
 
-func TestUsageDocumentsTheOpenRouterKey(t *testing.T) {
+func TestUsageDocumentsTheCloudKeys(t *testing.T) {
 	var buf bytes.Buffer
 	usage(&buf)
-	for _, want := range []string{"RNES_OPENROUTER_API_KEY", "credit limit", "-sandbox"} {
+	for _, want := range []string{"RNES_OPENROUTER_API_KEY", "RNES_MISTRAL_API_KEY", "credit limit", "-sandbox"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage is missing %q:\n%s", want, buf.String())
 		}
@@ -464,6 +505,20 @@ func TestNewSessionDropsTheOpenRouterKeyForACloudHarness(t *testing.T) {
 	}
 }
 
+func TestNewSessionDropsTheMistralKeyForACloudHarness(t *testing.T) {
+	var buf bytes.Buffer
+	cfg, _, _, err := newSession(cliConfig{sandbox: true, harness: "agy", mistralKey: "mis-x"}, t.TempDir(), t.TempDir(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.mistralKey != "" {
+		t.Errorf("mistralKey = %q, want it dropped", cfg.mistralKey)
+	}
+	if !strings.Contains(buf.String(), "RNES_MISTRAL_API_KEY is ignored") {
+		t.Errorf("output = %q, want the ignore note", buf.String())
+	}
+}
+
 func TestNewSessionRejectsModelServerFlagsForACloudHarness(t *testing.T) {
 	_, _, _, err := newSession(cliConfig{sandbox: true, harness: "agy", hostSet: true, portSet: true}, t.TempDir(), t.TempDir(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "-host") {
@@ -473,12 +528,15 @@ func TestNewSessionRejectsModelServerFlagsForACloudHarness(t *testing.T) {
 
 func TestNewSessionKeepsTheKeyAndFlagsForAModelServerHarness(t *testing.T) {
 	var buf bytes.Buffer
-	cfg, h, _, err := newSession(cliConfig{sandbox: true, harness: "opencode", openrouterKey: "sk-or-x"}, t.TempDir(), t.TempDir(), &buf)
+	cfg, h, _, err := newSession(cliConfig{sandbox: true, harness: "opencode", openrouterKey: "sk-or-x", mistralKey: "mis-x"}, t.TempDir(), t.TempDir(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.openrouterKey != "sk-or-x" {
 		t.Errorf("openrouterKey = %q, want it kept", cfg.openrouterKey)
+	}
+	if cfg.mistralKey != "mis-x" {
+		t.Errorf("mistralKey = %q, want it kept", cfg.mistralKey)
 	}
 	if _, ok := h.(*harness.Sandbox); !ok {
 		t.Errorf("harness = %T, want *harness.Sandbox", h)

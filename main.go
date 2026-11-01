@@ -72,6 +72,8 @@ type cliConfig struct {
 	githubToken string
 	// openrouterKey is RNES_OPENROUTER_API_KEY, handled like githubToken.
 	openrouterKey string
+	// mistralKey is RNES_MISTRAL_API_KEY, handled like openrouterKey.
+	mistralKey string
 	// skills are the -skill values (names, paths or "all") and skillsDirs the
 	// -skills-dir folders, both in the order given.
 	skills     stringList
@@ -118,7 +120,7 @@ func (c cliConfig) validate() error {
 			return fmt.Errorf("RNES_GITHUB_TOKEN is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the token; unset one of them")
 		}
 	}
-	if c.openrouterKey != "" && !c.ignoresOpenRouterKey() {
+	if c.openrouterKey != "" && !c.ignoresCloudKeys() {
 		if err := proxy.ValidateToken(c.openrouterKey); err != nil {
 			return fmt.Errorf("RNES_OPENROUTER_API_KEY is unusable: %w", err)
 		}
@@ -126,14 +128,22 @@ func (c cliConfig) validate() error {
 			return fmt.Errorf("RNES_OPENROUTER_API_KEY is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the key; unset one of them")
 		}
 	}
+	if c.mistralKey != "" && !c.ignoresCloudKeys() {
+		if err := proxy.ValidateToken(c.mistralKey); err != nil {
+			return fmt.Errorf("RNES_MISTRAL_API_KEY is unusable: %w", err)
+		}
+		if c.noInspect {
+			return fmt.Errorf("RNES_MISTRAL_API_KEY is set, but -no-inspect stops the proxy from decrypting HTTPS, so it couldn't inject the key; unset one of them")
+		}
+	}
 	return nil
 }
 
-// ignoresOpenRouterKey reports whether the selected harness never uses the
-// OpenRouter provider, so RNES_OPENROUTER_API_KEY is dropped with a note (see
-// run) even when it would otherwise be rejected as unusable or at odds with
-// -no-inspect.
-func (c cliConfig) ignoresOpenRouterKey() bool {
+// ignoresCloudKeys reports whether the selected harness never uses a cloud
+// model provider, so RNES_OPENROUTER_API_KEY and RNES_MISTRAL_API_KEY are
+// dropped with a note (see newSession) even when they would otherwise be
+// rejected as unusable or at odds with -no-inspect.
+func (c cliConfig) ignoresCloudKeys() bool {
 	if !c.sandbox {
 		return false
 	}
@@ -154,12 +164,13 @@ func checkTrailingArgs(argv, args []string) error {
 
 // newSession resolves everything run() needs before any server or container
 // starts, in one order: flags that only model-server sessions accept are
-// checked and a cloud harness's unused OpenRouter key is dropped first (so
-// nothing downstream sees credentials or flags that only a model-server
-// session would use), then skills and the sandbox policy (so a bad -skill or
-// .rnes/policy.txt fails with nothing left behind), then the harness itself.
-// Without -sandbox the harness reports its own error (e.g. agy requires it).
-// The returned cfg carries any adjustments (the dropped OpenRouter key).
+// checked and a cloud harness's unused OpenRouter and Mistral keys are
+// dropped first (so nothing downstream sees credentials or flags that only a
+// model-server session would use), then skills and the sandbox policy (so a
+// bad -skill or .rnes/policy.txt fails with nothing left behind), then the
+// harness itself. Without -sandbox the harness reports its own error (e.g.
+// agy requires it). The returned cfg carries any adjustments (the dropped
+// cloud keys).
 func newSession(cfg cliConfig, home, cwd string, stderr io.Writer) (cliConfig, harness.Harness, []skills.Skill, error) {
 	if cfg.sandbox {
 		needsModelServer, err := harness.NeedsModelServerName(cfg.harness)
@@ -172,6 +183,10 @@ func newSession(cfg cliConfig, home, cwd string, stderr io.Writer) (cliConfig, h
 		if !needsModelServer && cfg.openrouterKey != "" {
 			fmt.Fprintf(stderr, "rnes: note: RNES_OPENROUTER_API_KEY is ignored with -harness %s\n", cfg.harness)
 			cfg.openrouterKey = ""
+		}
+		if !needsModelServer && cfg.mistralKey != "" {
+			fmt.Fprintf(stderr, "rnes: note: RNES_MISTRAL_API_KEY is ignored with -harness %s\n", cfg.harness)
+			cfg.mistralKey = ""
 		}
 	}
 	attached, err := resolveSkills(cfg, home, cwd, stderr)
@@ -218,6 +233,7 @@ func harnessOptions(c cliConfig, attached []skills.Skill, policy []byte) harness
 		NoInspect:     c.noInspect,
 		GitHubToken:   c.githubToken,
 		OpenRouterKey: c.openrouterKey,
+		MistralKey:    c.mistralKey,
 		Skills:        attached,
 		Policy:        policy,
 		ModelSet:      c.modelSet,
@@ -274,9 +290,26 @@ Environment:
                       (requires -sandbox; ignored with -harness agy and -harness codex). The sandbox only
                       ever holds a placeholder, but an agent in it can still make
                       OpenRouter calls, so use a dedicated key with a low credit limit.
+                      To reuse the key opencode stores instead (shared with whatever
+                      else uses opencode):
+                        export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.openrouter.key')
                       Local llama stays the default; switch to an openrouter model
                       inside opencode. Prompts and code context leave your machine when
                       you do.
+  RNES_MISTRAL_API_KEY
+                      Mistral API key the sandbox's proxy injects at api.mistral.ai
+                      (requires -sandbox; ignored with -harness agy). The sandbox only
+                      ever holds a placeholder, but an agent in it can still make
+                      Mistral calls, so prefer a key scoped to what the agent needs.
+                      To reuse your Vibe subscription key instead (shared with your
+                      Vibe usage), on macOS after browser sign-in:
+                        export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)
+                      On Linux, copy the key from https://chat.mistral.ai/code/extensions
+                      (Advanced section):
+                        export RNES_MISTRAL_API_KEY=<key>
+                      Local llama stays the default; switch to a mistral model inside
+                      opencode. Prompts and code context leave your machine when you
+                      do.
 `
 
 // trailingArgsHelp documents the "--" passthrough.
@@ -409,6 +442,14 @@ func openRouterKeyFromEnv() string {
 	return key
 }
 
+// mistralKeyFromEnv returns RNES_MISTRAL_API_KEY and removes it from rnes's
+// environment, like githubTokenFromEnv.
+func mistralKeyFromEnv() string {
+	key := os.Getenv("RNES_MISTRAL_API_KEY")
+	os.Unsetenv("RNES_MISTRAL_API_KEY")
+	return key
+}
+
 // activeProviders names the credential providers a session will use, for the
 // startup line.
 func activeProviders(c cliConfig) []string {
@@ -418,6 +459,9 @@ func activeProviders(c cliConfig) []string {
 	}
 	if c.openrouterKey != "" {
 		names = append(names, "openrouter")
+	}
+	if c.mistralKey != "" {
+		names = append(names, "mistral")
 	}
 	return names
 }
@@ -482,6 +526,7 @@ func parseFlags() (cliConfig, error) {
 	cfg.dropSkillsForUpdate()
 	cfg.githubToken = cfg.sessionCredential("RNES_GITHUB_TOKEN", githubTokenFromEnv())
 	cfg.openrouterKey = cfg.sessionCredential("RNES_OPENROUTER_API_KEY", openRouterKeyFromEnv())
+	cfg.mistralKey = cfg.sessionCredential("RNES_MISTRAL_API_KEY", mistralKeyFromEnv())
 	return cfg, cfg.validate()
 }
 
@@ -545,6 +590,9 @@ func run() error {
 	}
 	if cfg.openrouterKey != "" {
 		fmt.Fprintln(os.Stderr, "rnes: OpenRouter key: the sandbox proxy injects it at openrouter.ai; the sandbox only holds a placeholder (use a dedicated key with a low credit limit). Prompts leave your machine when you pick an openrouter model.")
+	}
+	if cfg.mistralKey != "" {
+		fmt.Fprintln(os.Stderr, "rnes: Mistral key: the sandbox proxy injects it at api.mistral.ai; the sandbox only holds a placeholder. Prompts leave your machine when you pick a mistral model.")
 	}
 	if names := activeProviders(cfg); len(names) > 0 {
 		fmt.Fprintln(os.Stderr, "rnes: credential providers:", strings.Join(names, ", "))
@@ -661,9 +709,9 @@ func run() error {
 		if err := llamaserver.Download(cfg.model, os.Stderr); err != nil {
 			return err
 		}
-		modelIDs, err = llamaserver.DiscoverModels(baseURL)
+		modelIDs, err = llamaserver.DiscoverModelsWithReload(baseURL, true)
 		if err != nil {
-			return fmt.Errorf("discovering models: %w", err)
+			return fmt.Errorf("refreshing models after download: %w", err)
 		}
 		model, ok = llamaserver.ResolveModel(modelIDs, cfg.model)
 		if !ok {

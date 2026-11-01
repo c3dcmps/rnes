@@ -46,6 +46,10 @@ func TestFindCommandNotFoundOnEmptyPath(t *testing.T) {
 
 func TestDiscoverModelsReturnsAllIDs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.URL.RawQuery != "" {
+			http.Error(w, "initial discovery must not refresh the catalog", http.StatusBadRequest)
+			return
+		}
 		json.NewEncoder(w).Encode(modelsResponse{
 			Data: []struct {
 				ID string `json:"id"`
@@ -123,6 +127,52 @@ func TestDiscoverModelsErrorsOnNon200(t *testing.T) {
 
 	if _, err := DiscoverModels(srv.URL); err == nil {
 		t.Error("expected an error on a non-200 response")
+	}
+}
+
+func TestDiscoverModelsReload(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantID  string
+		wantErr string
+	}{
+		{"router", http.StatusOK, `{"data":[{"id":"new-model"}]}`, "new-model", ""},
+		{"fixed model", http.StatusOK, `{"data":[{"id":"fixed-model"}]}`, "fixed-model", ""},
+		{"empty cache", http.StatusOK, `{"data":[]}`, "", ""},
+		{"server error", http.StatusInternalServerError, "reload failed", "", "500"},
+		{"invalid response", http.StatusOK, "not JSON", "", "parsing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/models" || r.URL.Query().Get("reload") != "1" {
+					http.Error(w, "catalog refresh was not requested", http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(tt.status)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			ids, err := DiscoverModelsWithReload(srv.URL, true)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("DiscoverModels = %v, %v; want error containing %q", ids, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantID == "" {
+				if len(ids) != 0 {
+					t.Fatalf("got models %v, want none", ids)
+				}
+			} else if len(ids) != 1 || ids[0] != tt.wantID {
+				t.Fatalf("got models %v, want %q", ids, tt.wantID)
+			}
+		})
 	}
 }
 
