@@ -84,12 +84,22 @@ func HasProjectPolicy(cwd string) bool {
 }
 
 // LoadProjectPolicy reads and validates <cwd>/.rnes/policy.txt when present.
-// With allowPrivate (the -allow-private flag), "private host:port" entries are
-// accepted; otherwise they are rejected like every other route to a
-// non-public address. When the file is absent, found is false and raw is nil.
-// Both .rnes and .rnes/policy.txt are checked with Lstat so symlinks are
-// rejected before anything starts.
-func LoadProjectPolicy(cwd string, allowPrivate bool) (raw []byte, pol proxy.Policy, found bool, err error) {
+// "private host:port" entries are rejected like every other route to a
+// non-public address; LoadProjectPolicyAllowingPrivate accepts them (the
+// policy side of the -allow-private flag). When the file is absent, found is
+// false and raw is nil. Both .rnes and .rnes/policy.txt are checked with
+// Lstat so symlinks are rejected before anything starts.
+func LoadProjectPolicy(cwd string) (raw []byte, pol proxy.Policy, found bool, err error) {
+	return loadProjectPolicy(cwd, false)
+}
+
+// LoadProjectPolicyAllowingPrivate is LoadProjectPolicy with "private"
+// entries accepted: the policy side of the -allow-private flag.
+func LoadProjectPolicyAllowingPrivate(cwd string) (raw []byte, pol proxy.Policy, found bool, err error) {
+	return loadProjectPolicy(cwd, true)
+}
+
+func loadProjectPolicy(cwd string, allowPrivate bool) (raw []byte, pol proxy.Policy, found bool, err error) {
 	dir := filepath.Join(cwd, ProjectStateDir)
 	fi, err := os.Lstat(dir)
 	if err != nil {

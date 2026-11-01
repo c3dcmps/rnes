@@ -54,7 +54,11 @@ func newAgy(opts Options) (Harness, error) {
 	if !opts.Sandbox {
 		return nil, fmt.Errorf("-harness agy requires -sandbox")
 	}
-	if err := checkExtraPolicy(opts.Policy, opts.AllowPrivate, agyProfile()); err != nil {
+	check := checkExtraProject
+	if opts.AllowPrivate {
+		check = checkExtraProjectAllowingPrivate
+	}
+	if err := check(opts.Policy, agyProfile()); err != nil {
 		return nil, err
 	}
 	return newSandboxWithProfile(opts, agyProfile()), nil

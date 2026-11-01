@@ -200,12 +200,25 @@ func newSandbox(opts Options, hostConfig string) *Sandbox {
 	return newSandboxWithProfile(opts, opencodeProfile(hostConfig))
 }
 
-// checkExtraPolicy rejects a session policy that lists one of the profile's
+// checkExtraProject rejects a session policy that lists one of the profile's
 // harness-required no-inspect endpoints for TLS inspection: the harness only
 // works with those endpoints tunnelled unread, so the two can't both apply,
-// and silently downgrading the user's entry would hide that from them. The
-// profile's own defaults (used when policy is nil) never conflict, but the
-// check covers them anyway so a future harness can't ship one that does.
+// and silently downgrading the user's entry would hide that from them.
+// "private host:port" entries are rejected like every other route to a
+// non-public address; checkExtraProjectAllowingPrivate accepts them (the
+// policy side of the -allow-private flag). The profile's own defaults (used
+// when policy is nil) never conflict, but the check covers them anyway so a
+// future harness can't ship one that does.
+func checkExtraProject(policy []byte, profile sandboxProfile) error {
+	return checkExtraPolicy(policy, false, profile)
+}
+
+// checkExtraProjectAllowingPrivate is checkExtraProject with "private" entries
+// accepted: the policy side of the -allow-private flag.
+func checkExtraProjectAllowingPrivate(policy []byte, profile sandboxProfile) error {
+	return checkExtraPolicy(policy, true, profile)
+}
+
 func checkExtraPolicy(policy []byte, allowPrivate bool, profile sandboxProfile) error {
 	if profile.extraPolicy == "" {
 		return nil

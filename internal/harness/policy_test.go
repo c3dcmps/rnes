@@ -20,7 +20,7 @@ func TestGeneratePolicyWritesTemplateAndRefusesOverwriteOrSymlink(t *testing.T) 
 		t.Errorf("path = %q", path)
 	}
 
-	raw, pol, found, err := LoadProjectPolicy(cwd, false)
+	raw, pol, found, err := LoadProjectPolicy(cwd)
 	if err != nil || !found {
 		t.Fatalf("LoadProjectPolicy: found=%v err=%v", found, err)
 	}
@@ -53,7 +53,7 @@ func TestGeneratePolicyWritesTemplateAndRefusesOverwriteOrSymlink(t *testing.T) 
 func TestLoadProjectPolicyHandlesAbsentEmptyCustomAndInvalid(t *testing.T) {
 	// Absent .rnes directory -> found=false, nil raw, and does not create .rnes.
 	absent := t.TempDir()
-	raw, _, found, err := LoadProjectPolicy(absent, false)
+	raw, _, found, err := LoadProjectPolicy(absent)
 	if err != nil || found || raw != nil {
 		t.Fatalf("absent = (%v, found=%v, err=%v)", raw, found, err)
 	}
@@ -70,7 +70,7 @@ func TestLoadProjectPolicyHandlesAbsentEmptyCustomAndInvalid(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(emptyCwd, ".rnes", "policy.txt"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	raw, pol, found, err := LoadProjectPolicy(emptyCwd, false)
+	raw, pol, found, err := LoadProjectPolicy(emptyCwd)
 	if err != nil || !found || raw == nil || len(pol.Allow) != 0 {
 		t.Fatalf("empty = (rawNil=%v, allow=%v, found=%v, err=%v)", raw == nil, pol.Allow, found, err)
 	}
@@ -92,7 +92,7 @@ func TestLoadProjectPolicyHandlesAbsentEmptyCustomAndInvalid(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(starCwd, ".rnes", "policy.txt"), []byte("*\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := LoadProjectPolicy(starCwd, false); err == nil || !strings.Contains(err.Error(), "-all-net") {
+	if _, _, _, err := LoadProjectPolicy(starCwd); err == nil || !strings.Contains(err.Error(), "-all-net") {
 		t.Errorf("star policy err = %v, want error naming -all-net", err)
 	}
 
@@ -108,8 +108,36 @@ func TestLoadProjectPolicyHandlesAbsentEmptyCustomAndInvalid(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(symFileCwd, ".rnes", "policy.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := LoadProjectPolicy(symFileCwd, false); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, _, _, err := LoadProjectPolicy(symFileCwd); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("symlink policy.txt err = %v, want symlink error", err)
+	}
+}
+
+func TestLoadProjectPolicyAllowingPrivate(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, ".rnes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	txt := "private host.docker.internal:8080\n"
+	if err := os.WriteFile(filepath.Join(cwd, ".rnes", "policy.txt"), []byte(txt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without -allow-private the entry is rejected like any non-public route.
+	if _, _, _, err := LoadProjectPolicy(cwd); err == nil || !strings.Contains(err.Error(), "private") {
+		t.Errorf("LoadProjectPolicy(private entry) err = %v, want a private-entry error", err)
+	}
+
+	// With the Allowing variant it is accepted and marked private.
+	raw, pol, found, err := LoadProjectPolicyAllowingPrivate(cwd)
+	if err != nil || !found {
+		t.Fatalf("LoadProjectPolicyAllowingPrivate: found=%v err=%v", found, err)
+	}
+	if raw == nil {
+		t.Fatal("LoadProjectPolicyAllowingPrivate raw = nil")
+	}
+	if !pol.AllowsPrivate("host.docker.internal:8080") {
+		t.Errorf("got policy %+v, want host.docker.internal:8080 allowed private", pol)
 	}
 }
 

@@ -402,7 +402,11 @@ func resolvePolicy(c cliConfig, cwd string, stderr io.Writer) ([]byte, error) {
 		}
 		return nil, nil
 	}
-	raw, pol, found, err := harness.LoadProjectPolicy(cwd, c.allowPrivate)
+	load := harness.LoadProjectPolicy
+	if c.allowPrivate {
+		load = harness.LoadProjectPolicyAllowingPrivate
+	}
+	raw, pol, found, err := load(cwd)
 	if err != nil {
 		return nil, err
 	}
