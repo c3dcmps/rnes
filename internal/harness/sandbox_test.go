@@ -693,6 +693,32 @@ func TestOpenRouterKeyIsGatedInPolicyEnvAndConfig(t *testing.T) {
 	}
 }
 
+func TestMistralKeyIsGatedInPolicyEnvAndConfig(t *testing.T) {
+	off := newSandbox(Options{Sandbox: true}, "")
+	if strings.Contains(string(off.policy()), "mistral") {
+		t.Errorf("policy lists mistral without a key:\n%s", off.policy())
+	}
+	if b, _ := off.providerConfig(); b != nil {
+		t.Errorf("no key must mean no provider config, got %q", b)
+	}
+
+	s := newSandbox(Options{Sandbox: true, MistralKey: "mis-SECRET"}, "")
+	s.mistralPlaceholder = "ph_mis"
+	s.image, s.generated = "rnes-sandbox-default:x", "/tmp/cfg"
+	if !strings.Contains(string(s.policy()), "\napi.mistral.ai:443\n") {
+		t.Errorf("policy lacks api.mistral.ai:443:\n%s", s.policy())
+	}
+	b, err := s.providerConfig()
+	if err != nil || bytes.Count(b, []byte("\n")) != 1 || !strings.Contains(string(b), "mis-SECRET") {
+		t.Errorf("one line with the mistral provider wanted, got %q, %v", b, err)
+	}
+	pn := &proxyNet{network: "rnes-net-1", container: "rnes-proxy-1"}
+	joined := strings.Join(s.runArgs("rnes-1-aa", "/work/proj", pn, false), " ")
+	if strings.Contains(joined, "mis-SECRET") || !strings.Contains(joined, "-e MISTRAL_API_KEY=ph_mis") {
+		t.Errorf("run args = %s", joined)
+	}
+}
+
 func TestSandboxRunSendsTheOpenRouterKeyOnStdinNotArgv(t *testing.T) {
 	logPath := fakeDockerProxy(t, nil, nil)
 	t.Setenv("TMPDIR", t.TempDir())
@@ -727,6 +753,24 @@ func TestConfigureDropsALiteralOpenRouterKeyFromTheHostConfig(t *testing.T) {
 		b, _ := os.ReadFile(s.generated)
 		os.Remove(s.generated)
 		if gone := !strings.Contains(string(b), "sk-or-REAL"); gone != wantGone {
+			t.Errorf("key %q: literal key removed = %v, want %v", key, gone, wantGone)
+		}
+	}
+}
+
+func TestConfigureDropsALiteralMistralKeyFromTheHostConfig(t *testing.T) {
+	host := filepath.Join(t.TempDir(), "opencode.jsonc")
+	if err := os.WriteFile(host, []byte(`{"provider":{"mistral":{"options":{"apiKey":"mis-REAL"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for key, wantGone := range map[string]bool{"mis-SECRET": true, "": false} {
+		s := newSandbox(Options{Sandbox: true, MistralKey: key}, host)
+		if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(s.generated)
+		os.Remove(s.generated)
+		if gone := !strings.Contains(string(b), "mis-REAL"); gone != wantGone {
 			t.Errorf("key %q: literal key removed = %v, want %v", key, gone, wantGone)
 		}
 	}

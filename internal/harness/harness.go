@@ -111,6 +111,9 @@ type Options struct {
 	// OpenRouterKey, when set (with Sandbox), is injected by the sandbox's proxy
 	// into requests to openrouter.ai; the sandbox itself only gets a placeholder.
 	OpenRouterKey string
+	// MistralKey, when set (with Sandbox), is injected by the sandbox's proxy
+	// into requests to api.mistral.ai; the sandbox itself only gets a placeholder.
+	MistralKey string
 	// Skills are host skills to mount read-only into the sandbox, where the
 	// active harness looks for global skills (with Sandbox; see package skills).
 	Skills []skills.Skill

@@ -75,6 +75,9 @@ type sandboxProfile struct {
 	// openRouterEnv is the container env var set to openrouterPlaceholder when
 	// OpenRouterKey is active (e.g. "OPENROUTER_API_KEY" for opencode).
 	openRouterEnv string
+	// mistralEnv is the container env var set to mistralPlaceholder when
+	// MistralKey is active (e.g. "MISTRAL_API_KEY" for opencode).
+	mistralEnv string
 	// extraPolicy is appended to the session's proxy policy (e.g. agy's
 	// no-inspect Google endpoints).
 	extraPolicy string
@@ -155,6 +158,9 @@ type Sandbox struct {
 	// openrouterKey and openrouterPlaceholder are the same for OpenRouter.
 	openrouterKey         string
 	openrouterPlaceholder string
+	// mistralKey and mistralPlaceholder are the same for the Mistral API.
+	mistralKey         string
+	mistralPlaceholder string
 	// skills are mounted read-only under profile.skillsConfigHome.
 	skills []skills.Skill
 	// customPolicy, when non-nil, replaces defaultPolicy as the base of the
@@ -248,6 +254,7 @@ func newSandboxWithProfile(opts Options, profile sandboxProfile) *Sandbox {
 		openWeb:       opts.WebOpen && profile.webUI,
 		githubToken:   opts.GitHubToken,
 		openrouterKey: opts.OpenRouterKey,
+		mistralKey:    opts.MistralKey,
 		skills:        opts.Skills,
 		customPolicy:  opts.Policy,
 		hostConfig:    profile.hostConfig,
@@ -455,6 +462,15 @@ func (s *Sandbox) Configure(providerKey, baseURL string, modelIDs []string) erro
 			fmt.Fprintln(os.Stderr, "rnes: warning: removed the openrouter apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_OPENROUTER_API_KEY instead")
 		}
 	}
+	if s.mistralKey != "" {
+		var dropped bool
+		if out, dropped, err = opencodeconfig.DropProviderOption(out, "mistral", "apiKey"); err != nil {
+			return err
+		}
+		if dropped {
+			fmt.Fprintln(os.Stderr, "rnes: warning: removed the mistral apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_MISTRAL_API_KEY instead")
+		}
+	}
 	// CreateTemp creates the file 0600; the container runs as the same uid.
 	f, err := os.CreateTemp("", "rnes-sandbox-config-*.jsonc")
 	if err != nil {
@@ -545,6 +561,13 @@ func (s *Sandbox) Run(dir, providerKey, modelID string) error {
 			return err
 		}
 		s.openrouterPlaceholder = placeholder
+	}
+	if s.mistralKey != "" {
+		placeholder, err := newPlaceholder()
+		if err != nil {
+			return err
+		}
+		s.mistralPlaceholder = placeholder
 	}
 	providers, err := s.providerConfig()
 	if err != nil {
@@ -696,6 +719,9 @@ func (s *Sandbox) policy() []byte {
 	if s.openrouterKey != "" {
 		b.WriteString("\n# OpenRouter (RNES_OPENROUTER_API_KEY is set)\nopenrouter.ai:443\n")
 	}
+	if s.mistralKey != "" {
+		b.WriteString("\n# Mistral (RNES_MISTRAL_API_KEY is set)\napi.mistral.ai:443\n")
+	}
 	if s.allNet {
 		b.WriteString("\n# -all-net: any public host\n*\n")
 	}
@@ -772,6 +798,9 @@ func (s *Sandbox) runArgsForModel(name, dir string, pn *proxyNet, tty bool, mode
 	}
 	if s.openrouterPlaceholder != "" && s.profile.openRouterEnv != "" {
 		args = append(args, "-e", s.profile.openRouterEnv+"="+s.openrouterPlaceholder)
+	}
+	if s.mistralPlaceholder != "" && s.profile.mistralEnv != "" {
+		args = append(args, "-e", s.profile.mistralEnv+"="+s.mistralPlaceholder)
 	}
 	if s.webExpose {
 		args = append(args, "-e", webPasswordEnv+"="+s.webPassword)
@@ -1023,6 +1052,9 @@ func (s *Sandbox) providerConfig() ([]byte, error) {
 	}
 	if s.openrouterKey != "" {
 		cfgs = append(cfgs, proxy.ProviderConfig{Name: "openrouter", Token: s.openrouterKey, Placeholder: s.openrouterPlaceholder})
+	}
+	if s.mistralKey != "" {
+		cfgs = append(cfgs, proxy.ProviderConfig{Name: "mistral", Token: s.mistralKey, Placeholder: s.mistralPlaceholder})
 	}
 	if len(cfgs) == 0 {
 		return nil, nil

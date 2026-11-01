@@ -191,6 +191,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
 | `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
+| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). Set with `export RNES_MISTRAL_API_KEY=$(grep '^MISTRAL_API_KEY=' ~/.vibe/.env \| cut -d= -f2)`. |
 
 ### Sharing a llama-server across sessions
 
@@ -289,7 +290,8 @@ ownership".
     existing file). When `.rnes/policy.txt` is present, `-sandbox` uses it
     instead of the built-in defaults (still adding the session's llama-server
     for model-server harnesses, `openrouter.ai:443` when
-    `RNES_OPENROUTER_API_KEY` is set, and a cloud harness's own endpoints) and
+    `RNES_OPENROUTER_API_KEY` is set, `api.mistral.ai:443` when
+    `RNES_MISTRAL_API_KEY` is set, and a cloud harness's own endpoints) and
     prints the active allow-list at startup, marking entries that skip TLS
     interception with `(no-inspect)`; an empty `.rnes/policy.txt` restricts the
     sandbox to those automatic entries alone. Wildcard `*` and `private` are not
@@ -391,6 +393,15 @@ ownership".
     OpenRouter model is used. The proxy log shows requests by host.
   - Requires `-sandbox` (ignored with a note otherwise) and TLS interception:
     `rnes` refuses `-no-inspect` while the variable is set.
+- **Mistral models:** with `RNES_MISTRAL_API_KEY` set, the sandbox can use
+  Mistral models alongside the local llama-server, by the same mechanism as
+  OpenRouter models above: the sandbox only gets
+  `MISTRAL_API_KEY=<placeholder>`, and the proxy swaps it for the key in the
+  `Authorization` header, only at `api.mistral.ai:443`. A Vibe subscription
+  key (the `MISTRAL_API_KEY` from `~/.vibe/.env`) works. The same scope,
+  privacy and `-no-inspect` caveats as OpenRouter apply; a subscription key
+  is shared with your Vibe usage, so prefer a dedicated console.mistral.ai
+  key for agents.
 - Session data inside the container is discarded on exit (`--rm`), except a
   harness's own persisted auth volume (`agy`; see *Antigravity* below).
 
