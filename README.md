@@ -507,7 +507,8 @@ rnes -sandbox -skills-dir ~/team-skills -skill deploy
 - **Security:** a skill's content is untrusted input to the agent, like any
   project file, and it reaches the model: every attached skill's name and
   description are in the agent's prompt, and its files whenever the agent reads
-  them. With an OpenRouter model, that means they leave your machine. Attaching
+  them. With an OpenRouter or Mistral model, that means they leave your
+  machine. Attaching
   skills adds no credentials or environment variables. Only attach skills you
   trust and are happy to send to the model.
 - Like the other sandbox flags, `-skill` and `-skills-dir` require `-sandbox`,
@@ -523,8 +524,8 @@ sandbox, using your Google subscription instead of a local model. It requires
 - `-host` and `-port` are rejected.
 - `-model` is forwarded as `agy --model` only when passed explicitly;
   otherwise agy keeps its own model choice.
-- `RNES_OPENROUTER_API_KEY` is ignored with a note (that provider is an
-  opencode feature).
+- `RNES_OPENROUTER_API_KEY` and `RNES_MISTRAL_API_KEY` are ignored with a
+  note (those providers are opencode features).
 - Arguments after `--` are forwarded to `agy` (e.g.
   `rnes -sandbox -harness agy -- --version`).
 
@@ -552,7 +553,8 @@ runs:
 - Remove one with `docker volume rm rnes-auth-agy-<hash>`; this signs that
   project out and deletes its transcripts.
 
-**Security trade-off.** Unlike the GitHub and OpenRouter credentials, agy's
+**Security trade-off.** Unlike the GitHub and cloud-provider keys (OpenRouter,
+Mistral), agy's
 live OAuth session is inside the sandbox, because the agent has to use it
 directly. Anything that escapes the sandbox can use that session until it
 expires or you remove the volume. The sandbox still drops all Linux

@@ -164,12 +164,13 @@ func checkTrailingArgs(argv, args []string) error {
 
 // newSession resolves everything run() needs before any server or container
 // starts, in one order: flags that only model-server sessions accept are
-// checked and a cloud harness's unused OpenRouter key is dropped first (so
-// nothing downstream sees credentials or flags that only a model-server
-// session would use), then skills and the sandbox policy (so a bad -skill or
-// .rnes/policy.txt fails with nothing left behind), then the harness itself.
-// Without -sandbox the harness reports its own error (e.g. agy requires it).
-// The returned cfg carries any adjustments (the dropped OpenRouter key).
+// checked and a cloud harness's unused OpenRouter and Mistral keys are
+// dropped first (so nothing downstream sees credentials or flags that only a
+// model-server session would use), then skills and the sandbox policy (so a
+// bad -skill or .rnes/policy.txt fails with nothing left behind), then the
+// harness itself. Without -sandbox the harness reports its own error (e.g.
+// agy requires it). The returned cfg carries any adjustments (the dropped
+// cloud keys).
 func newSession(cfg cliConfig, home, cwd string, stderr io.Writer) (cliConfig, harness.Harness, []skills.Skill, error) {
 	if cfg.sandbox {
 		needsModelServer, err := harness.NeedsModelServerName(cfg.harness)
@@ -289,6 +290,9 @@ Environment:
                       (requires -sandbox; ignored with -harness agy). The sandbox only
                       ever holds a placeholder, but an agent in it can still make
                       OpenRouter calls, so use a dedicated key with a low credit limit.
+                      To reuse the key opencode stores instead (shared with whatever
+                      else uses opencode):
+                        export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.openrouter.key')
                       Local llama stays the default; switch to an openrouter model
                       inside opencode. Prompts and code context leave your machine when
                       you do.
@@ -297,6 +301,9 @@ Environment:
                       (requires -sandbox; ignored with -harness agy). The sandbox only
                       ever holds a placeholder, but an agent in it can still make
                       Mistral calls, so prefer a key scoped to what the agent needs.
+                      To reuse your Vibe subscription key instead (shared with your
+                      Vibe usage):
+                        export RNES_MISTRAL_API_KEY=$(grep '^MISTRAL_API_KEY=' ~/.vibe/.env | cut -d= -f2)
                       Local llama stays the default; switch to a mistral model inside
                       opencode. Prompts and code context leave your machine when you
                       do.
