@@ -65,10 +65,10 @@ the session's generated config so it starts on it.
 
 | Flag        | Default                                          | Description                                     |
 |-------------|---------------------------------------------------|--------------------------------------------------|
-| `-model`    | `unsloth/Qwen3.6-35B-A3B-GGUF:Q4_K_M`             | Model to serve; only a sandbox session starts on it — on the host, pick it via `/models`. With `-harness agy`, forwarded as `--model` only when given |
+| `-model`    | `unsloth/Qwen3.6-35B-A3B-GGUF:Q4_K_M`             | Model to serve; only a sandbox session starts on it — on the host, pick it via `/models`. With `-harness agy` or `-harness codex`, forwarded as `--model` only when given |
 | `-host`     | `127.0.0.1`                                       | llama-server host (with `-sandbox`, the narrowest address containers can reach; see below); rejected for harnesses that don't use llama-server |
 | `-port`     | `8080`                                            | llama-server port; rejected for harnesses that don't use llama-server |
-| `-harness`  | `opencode`                                        | Coding agent to run: `opencode` or `agy` (see *Antigravity* below) |
+| `-harness`  | `opencode`                                        | Coding agent to run: `opencode`, `agy` or `codex` (see *Antigravity* and *Codex* below) |
 | `-sandbox`  | off                                               | Run the agent in a Docker container (see below)  |
 | `-worktree` | none                                              | Create (or reuse) the linked git worktree `<repository>/.worktree/<name>` and run the session there; works on the host and with `-sandbox` (see *Worktrees* below) |
 | `-image`    | `default`                                         | Bundled sandbox image to use (see below; requires `-sandbox`) |
@@ -132,9 +132,9 @@ global config, `~/.config/opencode/opencode.jsonc`) — there's no flag for it.
 `rnes` merges into that file without touching any other keys already there,
 and points the agent at it via that agent's own config env var
 (`OPENCODE_CONFIG` for opencode), so it works even if the agent's normal
-config resolution would otherwise pick something else up. `agy` runs only in
-the sandbox and keeps its own state in a per-project Docker volume (see
-*Antigravity* below).
+config resolution would otherwise pick something else up. `agy` and `codex`
+run only in the sandbox and keep their own state in a per-project Docker
+volume (see *Antigravity* below).
 
 ### Web UI and diff review
 
@@ -190,7 +190,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | Variable                  | Description |
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
-| `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
+| `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy` and `-harness codex`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
 
 ### Sharing a llama-server across sessions
 
@@ -230,7 +230,8 @@ ownership".
   [`images/`](images), each a `<name>.Dockerfile`. The default, `default`,
   adds `jq`, `ripgrep`, `curl` and `gh` on top of the selected harness's base
   (opencode for `-harness opencode`, agy for `-harness agy`). Every image is a
-  layer on an internal per-harness base image (`base-opencode`, `base-agy`;
+  layer on an internal per-harness base image (`base-opencode`, `base-agy`,
+  `base-codex`;
   each installs its agent, git and the non-root user) that isn't selectable
   itself.
   `rnes` never pulls a sandbox image from a registry: a missing image is built
@@ -560,13 +561,74 @@ endpoints are added on top of it. If that leaves no host to intercept, the
 proxy writes the system roots alone to the sandbox's trust bundle, so real
 upstream certificates still validate.
 
+### Codex (`-harness codex`)
+
+`rnes -sandbox -harness codex` runs the OpenAI Codex CLI inside the same
+sandbox, using your ChatGPT subscription instead of a local model. Like
+`agy`, it requires `-sandbox` (there is no host mode) and never starts or
+contacts `llama-server`:
+
+- `-host` and `-port` are rejected.
+- `-model` is forwarded as `codex --model` only when passed explicitly;
+  otherwise codex keeps its own model choice.
+- `RNES_OPENROUTER_API_KEY` is ignored with a note (that provider is an
+  opencode feature).
+- Arguments after `--` are forwarded to `codex` (e.g.
+  `rnes -sandbox -harness codex -- exec "fix the failing test"`).
+
+The `codex` binary is installed in `images/base-codex.Dockerfile` and runs as
+your uid/gid, like the rest of the sandbox.
+
+**Auth and persistence.** Your host `~/.codex` is never mounted into the
+sandbox. Instead, each project gets its own Docker named volume,
+`rnes-auth-codex-<sha256(realpath(cwd))[:12]>` (label `rnes.auth=codex`),
+mounted read-write at codex's credential location, `/home/rnes/.codex`
+(`auth.json`, `config.toml`). It is kept across runs:
+
+- **First session:** codex asks you to sign in. Choose *Sign in with
+  ChatGPT*: codex starts its OAuth callback server inside the container
+  (loopback port 1455, which the container can't publish directly), so rnes
+  forwards that port through the session's proxy and publishes it on the
+  host's loopback only. Open the URL codex prints in a browser on this
+  machine, sign in with the account holding your ChatGPT subscription, and
+  the callback lands back in the container. The login is stored in the
+  volume, so later sessions in the same project start signed in — no browser
+  round-trip again. If the port is taken (e.g. by a parallel codex session),
+  or your browser can't reach this machine's loopback, sign in with
+  `codex login --device-auth` instead: it needs no callback port, only that
+  device-code login is enabled in your ChatGPT security settings.
+- Different projects never see each other's credentials.
+- `rnes` prints the volume name at startup.
+- List them with `docker volume ls --filter label=rnes.auth`.
+- Remove one with `docker volume rm rnes-auth-codex-<hash>`; this signs that
+  project out.
+
+**Security trade-off.** As with `agy`, codex's live OAuth session is inside
+the sandbox, because the agent has to use it directly. Anything that escapes
+the sandbox can use that session until it expires or you remove the volume.
+The sandbox still drops all Linux capabilities, enables
+`no-new-privileges`, has no direct host route apart from the proxy, and
+mounts only the project plus (read-only) `.rnes` and attached skills.
+`-all-net` is especially risky here — a live OAuth session plus arbitrary
+public egress — so rnes prints an explicit warning when the two are
+combined.
+
+**Network.** codex's OpenAI endpoints (`auth.openai.com`, `api.openai.com`,
+`chatgpt.com`) are added to the session's allow-list as `no-inspect` entries,
+so their HTTP/2 traffic is tunnelled untouched instead of decrypted. Hosts
+such as `github.com` stay TLS-intercepted, audited and credential-injected.
+A custom `.rnes/policy.txt` still applies; codex's own endpoints are added on
+top of it. If that leaves no host to intercept, the proxy writes the system
+roots alone to the sandbox's trust bundle, so real upstream certificates
+still validate.
+
 ## Notes
 
 - llama-server's own logs are written to
   `$TMPDIR/rnes-llama-server-<port>.log` rather than to the terminal, since
   the agent's full-screen UI shares the same tty and raw log output would
   corrupt it. The path is printed on startup.
-- Two harnesses are implemented today: `opencode` (host or sandbox) and
-  `agy` (sandbox only). Adding another means registering a `sandboxProfile`
+- Three harnesses are implemented today: `opencode` (host or sandbox) and
+  `agy`/`codex` (sandbox only). Adding another means registering a `sandboxProfile`
   in `internal/harness` (or implementing the small `Harness` interface for a
   host-mode agent) and adding its `images/base-<name>.Dockerfile`.
