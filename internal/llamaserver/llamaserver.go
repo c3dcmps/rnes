@@ -173,9 +173,14 @@ type modelsResponse struct {
 // cached model (loaded or not); a server started with a single -hf model
 // reports just that one. The list may be empty, e.g. a router with an empty
 // cache.
-// With reload, the router refreshes its catalog first, so a model downloaded
-// since the server started becomes visible.
-func DiscoverModels(baseURL string, reload bool) ([]string, error) {
+func DiscoverModels(baseURL string) ([]string, error) {
+	return DiscoverModelsWithReload(baseURL, false)
+}
+
+// DiscoverModelsWithReload queries /v1/models like DiscoverModels, but with
+// reload the router refreshes its catalog first, so a model downloaded since
+// the server started becomes visible.
+func DiscoverModelsWithReload(baseURL string, reload bool) ([]string, error) {
 	endpoint := baseURL + "/v1/models"
 	if reload {
 		endpoint += "?reload=1"

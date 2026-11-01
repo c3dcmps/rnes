@@ -58,7 +58,7 @@ func TestDiscoverModelsReturnsAllIDs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ids, err := DiscoverModels(srv.URL, false)
+	ids, err := DiscoverModels(srv.URL)
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestDiscoverModelsAllowsEmptyData(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ids, err := DiscoverModels(srv.URL, false)
+	ids, err := DiscoverModels(srv.URL)
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestDiscoverModelsErrorsOnNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := DiscoverModels(srv.URL, false); err == nil {
+	if _, err := DiscoverModels(srv.URL); err == nil {
 		t.Error("expected an error on a non-200 response")
 	}
 }
@@ -155,7 +155,7 @@ func TestDiscoverModelsReload(t *testing.T) {
 				fmt.Fprint(w, tt.body)
 			}))
 			defer srv.Close()
-			ids, err := DiscoverModels(srv.URL, true)
+			ids, err := DiscoverModelsWithReload(srv.URL, true)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("DiscoverModels = %v, %v; want error containing %q", ids, err, tt.wantErr)
