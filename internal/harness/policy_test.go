@@ -2,6 +2,9 @@ package harness
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +165,101 @@ func TestLoadProjectPolicyAllowingPrivate(t *testing.T) {
 	}
 	if !pol.AllowsPrivate("host.docker.internal:8080") {
 		t.Errorf("got policy %+v, want host.docker.internal:8080 allowed private", pol)
+	}
+}
+
+// The -allow-private flag is consent for "private"-keyword entries only: a
+// plain (keyword-less) entry that resolves to a local address must stay
+// refused whichever way the flag points, and without the flag the keyword
+// entries are skipped entirely. Run the merged session policy through the
+// real proxy Server to check all of it on the forward path.
+func TestSessionPolicyKeywordVersusPlainLocalEntries(t *testing.T) {
+	reachedPlain, reachedKeyword := false, false
+	plainBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reachedPlain = true }))
+	defer plainBackend.Close()
+	keywordBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reachedKeyword = true }))
+	defer keywordBackend.Close()
+	plainHostport := strings.TrimPrefix(plainBackend.URL, "http://")
+	keywordHostport := strings.TrimPrefix(keywordBackend.URL, "http://")
+
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, ".rnes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ".rnes", "policy.txt"),
+		[]byte("private "+keywordHostport+"\n"+plainHostport+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// mergedPolicy parses what a session's proxy container would load for
+	// the session policy this raw file produces.
+	mergedPolicy := func(raw []byte) proxy.Policy {
+		s := newSandbox(Options{Sandbox: true, Policy: raw}, "")
+		s.modelServer = "host.docker.internal:8080"
+		pol, err := proxy.ParsePolicy(bytes.NewReader(s.policy()))
+		if err != nil {
+			t.Fatalf("ParsePolicy(merged): %v", err)
+		}
+		return pol
+	}
+	fetch := func(pol proxy.Policy, target string) int {
+		px := httptest.NewServer(&proxy.Server{Policy: pol})
+		defer px.Close()
+		pu, err := url.Parse(px.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+		resp, err := client.Get("http://" + target + "/")
+		if err != nil {
+			t.Fatalf("Get %s: %v", target, err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Without -allow-private: the keyword entry is skipped and stripped; the
+	// plain entry is in the policy but the proxy refuses its local address.
+	raw, _, _, skip, err := LoadProjectPolicy(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(skip, ","); got != keywordHostport {
+		t.Fatalf("skipPrivate = %q, want [%s]", got, keywordHostport)
+	}
+	if strings.Contains(string(raw), "private ") {
+		t.Fatalf("raw still contains the skipped line: %q", raw)
+	}
+	pol := mergedPolicy(raw)
+	if got := fetch(pol, plainHostport); got != http.StatusForbidden {
+		t.Errorf("plain entry to a local endpoint without the flag: status = %d, want 403", got)
+	}
+	if got := fetch(pol, keywordHostport); got != http.StatusForbidden {
+		t.Errorf("skipped keyword entry without the flag: status = %d, want 403", got)
+	}
+
+	// With -allow-private: the keyword entry reaches the local endpoint; the
+	// plain entry is still refused.
+	raw, _, _, skip, err = LoadProjectPolicyAllowingPrivate(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skip) != 0 {
+		t.Errorf("skipPrivate with the flag = %v, want none", skip)
+	}
+	pol = mergedPolicy(raw)
+	if got := fetch(pol, plainHostport); got != http.StatusForbidden {
+		t.Errorf("plain entry to a local endpoint with -allow-private: status = %d, want 403", got)
+	}
+	if got := fetch(pol, keywordHostport); got != http.StatusOK {
+		t.Errorf("keyword entry with -allow-private: status = %d, want 200", got)
+	}
+
+	if reachedPlain {
+		t.Error("a plain policy entry must never reach a non-public address, flag or no flag")
+	}
+	if !reachedKeyword {
+		t.Error("a keyword entry honored by -allow-private must reach the allowed local endpoint")
 	}
 }
 
