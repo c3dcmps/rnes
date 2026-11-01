@@ -235,7 +235,10 @@ func checkExtraPolicy(policy []byte, allowPrivate bool, profile sandboxProfile) 
 	if allowPrivate {
 		userPol, err = proxy.ParseUserPolicyAllowingPrivate(bytes.NewReader(user))
 	} else {
-		userPol, err = proxy.ParseUserPolicy(bytes.NewReader(user))
+		// "private" entries skipped by ParseUserPolicy can't conflict: they
+		// are not in the policy at all, so they never fall under TLS
+		// inspection either.
+		userPol, _, err = proxy.ParseUserPolicy(bytes.NewReader(user))
 	}
 	if err != nil {
 		return fmt.Errorf("checking the session policy: %w", err)

@@ -461,6 +461,36 @@ func TestResolvePolicyHandlesHostAndSandbox(t *testing.T) {
 	if !strings.Contains(buf.String(), "example.com:443 (no-inspect)") || !strings.Contains(buf.String(), "github.com:443") {
 		t.Errorf("startup line = %q, want example.com:443 (no-inspect) and plain github.com:443", buf.String())
 	}
+
+	// A "private" entry without -allow-private is resolved with a note and
+	// passed on without the private host; with the flag it is honored.
+	buf.Reset()
+	if err := os.WriteFile(filepath.Join(cwd, ".rnes", "policy.txt"), []byte("pypi.org:443\nprivate host.docker.internal:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = resolvePolicy(cfg, cwd, &buf)
+	if err != nil || raw == nil {
+		t.Fatalf("private-entry policy without flag = (rawNil=%v, err=%v)", raw == nil, err)
+	}
+	if !strings.Contains(buf.String(), `ignoring "private" entries in .rnes/policy.txt without -allow-private`) || !strings.Contains(buf.String(), "host.docker.internal:8080") {
+		t.Errorf("output = %q, want the skip note naming the host", buf.String())
+	}
+	if !strings.Contains(buf.String(), "pypi.org:443") || strings.Contains(buf.String(), "host.docker.internal:8080 (private)") {
+		t.Errorf("startup line = %q, want pypi.org listed and the private host not honored", buf.String())
+	}
+
+	// With -allow-private the entry is honored: no skip note, the startup
+	// line marks it private.
+	buf.Reset()
+	if _, err := resolvePolicy(cliConfig{sandbox: true, allowPrivate: true, githubToken: "github_pat_x"}, cwd, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "ignoring") {
+		t.Errorf("with -allow-private the note must not fire: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "host.docker.internal:8080 (private)") {
+		t.Errorf("output = %q, want the private host listed as honored", buf.String())
+	}
 }
 
 func TestCheckTrailingArgsRejectsPositionalsOutsideThePassthrough(t *testing.T) {

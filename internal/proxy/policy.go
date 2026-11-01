@@ -19,15 +19,18 @@ import (
 // ignored. A malformed line is an error — callers must never fall back to
 // allow-all, or to a policy that differs from what was written.
 func ParsePolicy(r io.Reader) (Policy, error) {
-	return parsePolicy(r, true, true)
+	pol, _, err := parsePolicy(r, true, true)
+	return pol, err
 }
 
 // ParseUserPolicy reads a user-managed policy file (.rnes/policy.txt): one
 // explicit "host:port" or "no-inspect host:port" per line, with '#' comments
 // and blank lines ignored. Unlike ParsePolicy, it rejects "*" (wildcard public
-// egress is gated by the -all-net CLI flag) and "private" entries (every user
-// policy host must resolve to a public address).
-func ParseUserPolicy(r io.Reader) (Policy, error) {
+// egress is gated by the -all-net CLI flag). A "private host:port" entry is
+// skipped and its host:port returned in ignoredPrivate: egress to non-public
+// addresses is gated by the -allow-private CLI flag, so without the flag the
+// entry grants nothing and the caller warns that it was ignored.
+func ParseUserPolicy(r io.Reader) (pol Policy, ignoredPrivate []string, err error) {
 	return parsePolicy(r, false, false)
 }
 
@@ -35,14 +38,15 @@ func ParseUserPolicy(r io.Reader) (Policy, error) {
 // ParseUserPolicy, but additionally accepts "private host:port" entries,
 // whose targets may resolve to non-public addresses (the LAN, a VPN, or the
 // host itself). It backs the -allow-private CLI flag, the only way a project
-// policy gets to leave the sandbox: without it, ParseUserPolicy rejects
+// policy gets to leave the sandbox: without it, ParseUserPolicy skips
 // "private" entries, so the file can't grant LAN access no matter what it
 // contains.
 func ParseUserPolicyAllowingPrivate(r io.Reader) (Policy, error) {
-	return parsePolicy(r, false, true)
+	pol, _, err := parsePolicy(r, false, true)
+	return pol, err
 }
 
-func parsePolicy(r io.Reader, internal, allowPrivate bool) (Policy, error) {
+func parsePolicy(r io.Reader, internal, allowPrivate bool) (pol Policy, ignoredPrivate []string, err error) {
 	var hostports, privates, noInspects []string
 	anyPublic := false
 	sc := bufio.NewScanner(r)
@@ -54,18 +58,19 @@ func parsePolicy(r io.Reader, internal, allowPrivate bool) (Policy, error) {
 		}
 		if line == "*" {
 			if !internal {
-				return Policy{}, fmt.Errorf("line %d: \"*\" is not allowed in policy.txt; pass -all-net on the command line instead", n)
+				return Policy{}, nil, fmt.Errorf("line %d: \"*\" is not allowed in policy.txt; pass -all-net on the command line instead", n)
 			}
 			anyPublic = true
 			continue
 		}
 		if rest, ok := strings.CutPrefix(line, "private "); ok {
-			if !internal && !allowPrivate {
-				return Policy{}, fmt.Errorf("line %d: \"private\" entries are not allowed in policy.txt; pass -allow-private on the command line instead", n)
-			}
 			hp := strings.TrimSpace(rest)
 			if err := validateHostPort(hp); err != nil {
-				return Policy{}, fmt.Errorf("line %d: %w", n, err)
+				return Policy{}, nil, fmt.Errorf("line %d: %w", n, err)
+			}
+			if !internal && !allowPrivate {
+				ignoredPrivate = append(ignoredPrivate, hp)
+				continue
 			}
 			hostports = append(hostports, hp)
 			privates = append(privates, hp)
@@ -74,21 +79,21 @@ func parsePolicy(r io.Reader, internal, allowPrivate bool) (Policy, error) {
 		if rest, ok := strings.CutPrefix(line, "no-inspect "); ok {
 			hp := strings.TrimSpace(rest)
 			if err := validateHostPort(hp); err != nil {
-				return Policy{}, fmt.Errorf("line %d: %w", n, err)
+				return Policy{}, nil, fmt.Errorf("line %d: %w", n, err)
 			}
 			hostports = append(hostports, hp)
 			noInspects = append(noInspects, hp)
 			continue
 		}
 		if err := validateHostPort(line); err != nil {
-			return Policy{}, fmt.Errorf("line %d: %w", n, err)
+			return Policy{}, nil, fmt.Errorf("line %d: %w", n, err)
 		}
 		hostports = append(hostports, line)
 	}
 	if err := sc.Err(); err != nil {
-		return Policy{}, err
+		return Policy{}, nil, err
 	}
-	pol := NewPolicy(hostports)
+	pol = NewPolicy(hostports)
 	for _, hp := range privates {
 		pol.AllowPrivate(hp)
 	}
@@ -96,7 +101,7 @@ func parsePolicy(r io.Reader, internal, allowPrivate bool) (Policy, error) {
 		pol.AllowNoInspect(hp)
 	}
 	pol.AnyPublic = anyPublic
-	return pol, nil
+	return pol, ignoredPrivate, nil
 }
 
 func validateHostPort(s string) error {

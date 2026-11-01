@@ -105,8 +105,8 @@ func TestParsePolicyPrivateEntry(t *testing.T) {
 	}
 }
 
-func TestParseUserPolicyRejectsStarAndPrivate(t *testing.T) {
-	pol, err := ParseUserPolicy(strings.NewReader("# comment\npypi.org:443\nno-inspect grpc.example.com:443\n"))
+func TestParseUserPolicySkipsPrivateAndRejectsStar(t *testing.T) {
+	pol, _, err := ParseUserPolicy(strings.NewReader("# comment\npypi.org:443\nno-inspect grpc.example.com:443\n"))
 	if err != nil || !pol.Explicit("pypi.org:443") || !pol.Explicit("grpc.example.com:443") || pol.AnyPublic || pol.AllowsPrivate("pypi.org:443") {
 		t.Fatalf("ParseUserPolicy valid = (%+v, %v)", pol, err)
 	}
@@ -116,13 +116,31 @@ func TestParseUserPolicyRejectsStarAndPrivate(t *testing.T) {
 	if got := strings.Join(pol.DNSHosts(), ","); got != "pypi.org" {
 		t.Errorf("DNSHosts = %q, want only pypi.org (no-inspect entries excluded)", got)
 	}
-	if _, err := ParseUserPolicy(strings.NewReader("pypi.org:443\n*\n")); err == nil || !strings.Contains(err.Error(), "-all-net") {
+	if _, _, err := ParseUserPolicy(strings.NewReader("pypi.org:443\n*\n")); err == nil || !strings.Contains(err.Error(), "-all-net") {
 		t.Errorf("ParseUserPolicy(*) = %v, want error naming -all-net", err)
 	}
-	if _, err := ParseUserPolicy(strings.NewReader("private host.docker.internal:8080\n")); err == nil || !strings.Contains(err.Error(), "line 1") {
-		t.Errorf("ParseUserPolicy(private) = %v, want line 1 error", err)
+
+	// Without -allow-private a "private" entry is skipped, not granted: it is
+	// reported back so the CLI can warn, and never lands in the policy.
+	pol, skipped, err := ParseUserPolicy(strings.NewReader("private host.docker.internal:8080\npypi.org:443\n"))
+	if err != nil {
+		t.Fatalf("ParseUserPolicy(private entry): %v", err)
 	}
-	if _, err := ParseUserPolicy(strings.NewReader("no-inspect bad_port\n")); err == nil || !strings.Contains(err.Error(), "line 1") {
+	if got := strings.Join(skipped, ","); got != "host.docker.internal:8080" {
+		t.Errorf("skipped = %q, want [host.docker.internal:8080]", got)
+	}
+	if pol.Explicit("host.docker.internal:8080") || pol.AllowsPrivate("host.docker.internal:8080") {
+		t.Errorf("skipped entry must not be in the policy: %+v", pol)
+	}
+	if !pol.Explicit("pypi.org:443") {
+		t.Errorf("remaining entries must still parse: %+v", pol)
+	}
+
+	// A malformed "private" line is still a parse error, skipped or not.
+	if _, _, err := ParseUserPolicy(strings.NewReader("private bad_port\n")); err == nil || !strings.Contains(err.Error(), "line 1") {
+		t.Errorf("ParseUserPolicy(private malformed) = %v, want line 1 error", err)
+	}
+	if _, _, err := ParseUserPolicy(strings.NewReader("no-inspect bad_port\n")); err == nil || !strings.Contains(err.Error(), "line 1") {
 		t.Errorf("ParseUserPolicy(no-inspect malformed) = %v, want line 1 error", err)
 	}
 }

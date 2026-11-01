@@ -84,65 +84,68 @@ func HasProjectPolicy(cwd string) bool {
 }
 
 // LoadProjectPolicy reads and validates <cwd>/.rnes/policy.txt when present.
-// "private host:port" entries are rejected like every other route to a
-// non-public address; LoadProjectPolicyAllowingPrivate accepts them (the
-// policy side of the -allow-private flag). When the file is absent, found is
-// false and raw is nil. Both .rnes and .rnes/policy.txt are checked with
-// Lstat so symlinks are rejected before anything starts.
-func LoadProjectPolicy(cwd string) (raw []byte, pol proxy.Policy, found bool, err error) {
+// "private host:port" entries are skipped and their host:ports returned in
+// skipPrivate (the CLI warns about them): without -allow-private they grant
+// nothing, and egress to those addresses stays blocked like any non-public
+// route. LoadProjectPolicyAllowingPrivate accepts them (the policy side of
+// the -allow-private flag). When the file is absent, found is false and raw
+// is nil. Both .rnes and .rnes/policy.txt are checked with Lstat so symlinks
+// are rejected before anything starts.
+func LoadProjectPolicy(cwd string) (raw []byte, pol proxy.Policy, found bool, skipPrivate []string, err error) {
 	return loadProjectPolicy(cwd, false)
 }
 
 // LoadProjectPolicyAllowingPrivate is LoadProjectPolicy with "private"
 // entries accepted: the policy side of the -allow-private flag.
-func LoadProjectPolicyAllowingPrivate(cwd string) (raw []byte, pol proxy.Policy, found bool, err error) {
+func LoadProjectPolicyAllowingPrivate(cwd string) (raw []byte, pol proxy.Policy, found bool, skipPrivate []string, err error) {
 	return loadProjectPolicy(cwd, true)
 }
 
-func loadProjectPolicy(cwd string, allowPrivate bool) (raw []byte, pol proxy.Policy, found bool, err error) {
+func loadProjectPolicy(cwd string, allowPrivate bool) (raw []byte, pol proxy.Policy, found bool, skipPrivate []string, err error) {
 	dir := filepath.Join(cwd, ProjectStateDir)
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, proxy.Policy{}, false, nil
+			return nil, proxy.Policy{}, false, nil, nil
 		}
-		return nil, proxy.Policy{}, false, fmt.Errorf("checking %s: %w", ProjectStateDir, err)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("checking %s: %w", ProjectStateDir, err)
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return nil, proxy.Policy{}, false, fmt.Errorf("%s is a symlink; refusing to use it", ProjectStateDir)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("%s is a symlink; refusing to use it", ProjectStateDir)
 	}
 	if !fi.IsDir() {
-		return nil, proxy.Policy{}, false, fmt.Errorf("%s exists and is not a directory", ProjectStateDir)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("%s exists and is not a directory", ProjectStateDir)
 	}
 
 	path := filepath.Join(dir, "policy.txt")
 	pfi, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, proxy.Policy{}, false, nil
+			return nil, proxy.Policy{}, false, nil, nil
 		}
-		return nil, proxy.Policy{}, false, fmt.Errorf("checking %s: %w", ProjectPolicyRel, err)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("checking %s: %w", ProjectPolicyRel, err)
 	}
 	if pfi.Mode()&os.ModeSymlink != 0 || !pfi.Mode().IsRegular() {
-		return nil, proxy.Policy{}, false, fmt.Errorf("%s must be a regular file, not a symlink", ProjectPolicyRel)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("%s must be a regular file, not a symlink", ProjectPolicyRel)
 	}
 
 	raw, err = os.ReadFile(path)
 	if err != nil {
-		return nil, proxy.Policy{}, false, fmt.Errorf("reading %s: %w", ProjectPolicyRel, err)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("reading %s: %w", ProjectPolicyRel, err)
 	}
 	if raw == nil {
 		raw = []byte{}
 	}
+	var skipped []string
 	if allowPrivate {
 		pol, err = proxy.ParseUserPolicyAllowingPrivate(bytes.NewReader(raw))
 	} else {
-		pol, err = proxy.ParseUserPolicy(bytes.NewReader(raw))
+		pol, skipped, err = proxy.ParseUserPolicy(bytes.NewReader(raw))
 	}
 	if err != nil {
-		return nil, proxy.Policy{}, false, fmt.Errorf("parsing %s: %w", ProjectPolicyRel, err)
+		return nil, proxy.Policy{}, false, nil, fmt.Errorf("parsing %s: %w", ProjectPolicyRel, err)
 	}
-	return raw, pol, true, nil
+	return raw, pol, true, skipped, nil
 }
 
 // BlockedSummary reads a proxy log file and summarizes any "rnes-proxy: denied
