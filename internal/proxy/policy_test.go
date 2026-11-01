@@ -127,6 +127,22 @@ func TestParseUserPolicyRejectsStarAndPrivate(t *testing.T) {
 	}
 }
 
+// ParseUserPolicyAllowingPrivate backs the CLI's -allow-private flag: the only
+// way a project policy gets to name a non-public address. The flag itself is
+// the consent, so with it set the entry must parse and be marked private.
+func TestParseUserPolicyAllowingPrivate(t *testing.T) {
+	pol, err := ParseUserPolicyAllowingPrivate(strings.NewReader("# Home Assistant MCP server, on this machine\nprivate homeassistant.local:9584\npypi.org:443\n"))
+	if err != nil {
+		t.Fatalf("ParseUserPolicyAllowingPrivate: %v", err)
+	}
+	if !pol.AllowsPrivate("homeassistant.local:9584") || !pol.Explicit("homeassistant.local:9584") {
+		t.Errorf("the private entry must be both Explicit and AllowsPrivate: %+v", pol)
+	}
+	if pol.AllowsPrivate("pypi.org:443") {
+		t.Errorf("an ordinary entry must not be AllowsPrivate: %+v", pol)
+	}
+}
+
 func TestParsePolicyNoInspectExcludesHostFromDNSHosts(t *testing.T) {
 	pol, err := ParsePolicy(strings.NewReader("no-inspect accounts.google.com:443\ngithub.com:443\n"))
 	if err != nil {

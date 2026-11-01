@@ -206,7 +206,7 @@ func newSandbox(opts Options, hostConfig string) *Sandbox {
 // and silently downgrading the user's entry would hide that from them. The
 // profile's own defaults (used when policy is nil) never conflict, but the
 // check covers them anyway so a future harness can't ship one that does.
-func checkExtraPolicy(policy []byte, profile sandboxProfile) error {
+func checkExtraPolicy(policy []byte, allowPrivate bool, profile sandboxProfile) error {
 	if profile.extraPolicy == "" {
 		return nil
 	}
@@ -217,7 +217,13 @@ func checkExtraPolicy(policy []byte, profile sandboxProfile) error {
 	if len(user) == 0 {
 		return nil
 	}
-	userPol, err := proxy.ParseUserPolicy(bytes.NewReader(user))
+	var userPol proxy.Policy
+	var err error
+	if allowPrivate {
+		userPol, err = proxy.ParseUserPolicyAllowingPrivate(bytes.NewReader(user))
+	} else {
+		userPol, err = proxy.ParseUserPolicy(bytes.NewReader(user))
+	}
 	if err != nil {
 		return fmt.Errorf("checking the session policy: %w", err)
 	}

@@ -99,6 +99,11 @@ type Options struct {
 	// proxy, not just the default allow-list. The host machine and the LAN
 	// stay out of reach apart from llama-server.
 	AllNet bool
+	// AllowPrivate lets "private host:port" entries in the project policy
+	// (.rnes/policy.txt) reach non-public addresses such as LAN or VPN
+	// endpoints. Without it the policy parser rejects them, so an agent can
+	// never grant itself LAN access by editing its own policy file.
+	AllowPrivate bool
 	// NoInspect turns off TLS interception in the sandbox's egress proxy. By
 	// default the proxy terminates TLS (with a CA made for the session, which
 	// the sandbox is set up to trust) for the hosts on its allow-list, and

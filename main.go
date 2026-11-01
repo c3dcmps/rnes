@@ -60,6 +60,11 @@ type cliConfig struct {
 	// allNet lets the sandbox reach any public host, not just the
 	// default allow-list.
 	allNet bool
+	// allowPrivate lets "private host:port" entries in .rnes/policy.txt reach
+	// non-public addresses (the LAN, a VPN, the host itself). Without it the
+	// policy parser rejects them, so an agent can't edit its own way to LAN
+	// access; only the user's command line can.
+	allowPrivate bool
 	// noInspect turns off TLS interception in the sandbox's proxy.
 	noInspect bool
 	// web opens the session's web UI in the browser at startup. noWeb turns
@@ -109,8 +114,8 @@ func (c cliConfig) validate() error {
 	if c.worktree != "" && c.sandboxUpdate {
 		return fmt.Errorf("-worktree and -sandbox-update cannot be used together")
 	}
-	if !c.sandbox && (c.image != "" || c.build || c.allNet || c.noInspect || len(c.skills) > 0 || len(c.skillsDirs) > 0) {
-		return fmt.Errorf("-image, -build, -all-net, -no-inspect, -skill and -skills-dir require -sandbox")
+	if !c.sandbox && (c.image != "" || c.build || c.allNet || c.allowPrivate || c.noInspect || len(c.skills) > 0 || len(c.skillsDirs) > 0) {
+		return fmt.Errorf("-image, -build, -all-net, -allow-private, -no-inspect, -skill and -skills-dir require -sandbox")
 	}
 	if c.githubToken != "" {
 		if err := proxy.ValidateToken(c.githubToken); err != nil {
@@ -230,6 +235,7 @@ func harnessOptions(c cliConfig, attached []skills.Skill, policy []byte) harness
 		Image:         c.image,
 		Build:         c.build,
 		AllNet:        c.allNet,
+		AllowPrivate:  c.allowPrivate,
 		NoInspect:     c.noInspect,
 		GitHubToken:   c.githubToken,
 		OpenRouterKey: c.openrouterKey,
@@ -396,7 +402,7 @@ func resolvePolicy(c cliConfig, cwd string, stderr io.Writer) ([]byte, error) {
 		}
 		return nil, nil
 	}
-	raw, pol, found, err := harness.LoadProjectPolicy(cwd)
+	raw, pol, found, err := harness.LoadProjectPolicy(cwd, c.allowPrivate)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +424,8 @@ func resolvePolicy(c cliConfig, cwd string, stderr io.Writer) ([]byte, error) {
 		for i, hp := range hosts {
 			if pol.SkipsInspect(hp) {
 				hp += " (no-inspect)"
+			} else if pol.AllowsPrivate(hp) {
+				hp += " (private)"
 			}
 			shown[i] = hp
 		}
@@ -497,6 +505,7 @@ func parseFlags() (cliConfig, error) {
 	flag.BoolVar(&cfg.sandboxUpdate, "sandbox-update", false, "rebuild the sandbox images (every bundled one for every harness, unless -harness selects one or -image selects an image; plus each base and the proxy image) from scratch, without docker's layer cache, so it picks up new packages and a newer agent, then exit without running the agent; implies -sandbox")
 	flag.BoolVar(&cfg.generatePolicy, "generate-policy", false, "write a starter .rnes/policy.txt in the current directory for -sandbox and exit without running the agent")
 	flag.BoolVar(&cfg.allNet, "all-net", false, "let the sandbox reach any public host over http(s), not just the default allow-list (your machine and LAN stay blocked apart from llama-server); requires -sandbox")
+	flag.BoolVar(&cfg.allowPrivate, "allow-private", false, "honor \"private host:port\" entries in .rnes/policy.txt, letting those hosts resolve to non-public addresses such as LAN or VPN endpoints; without it such entries are rejected; requires -sandbox")
 	flag.BoolVar(&cfg.noInspect, "no-inspect", false, "don't terminate TLS in the sandbox's proxy: tunnel every HTTPS connection unread (by default the proxy decrypts the allow-listed hosts with a CA made for the session, and logs each request); requires -sandbox")
 	flag.BoolVar(&cfg.web, "web", false, "open opencode's web UI for the session in your browser at startup (requires -harness opencode); the TUI keeps running and both share one live session")
 	flag.BoolVar(&cfg.noWeb, "no-web", false, "don't serve the session's web UI at all (with -sandbox it is exposed on a loopback port by default; on the host opencode's server always serves it, so this only saves the sandbox forward)")

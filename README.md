@@ -77,6 +77,7 @@ the session's generated config so it starts on it.
 | `-sandbox-update` | off                                         | Rebuild the sandbox images from scratch, then exit without running the agent (implies `-sandbox` and `-build`). Without `-harness`, rebuilds every harness's images; with it, only that harness's (and, without `-image`, every image on its base) |
 | `-generate-policy` | off                                        | Write a starter `.rnes/policy.txt` in the current directory for `-sandbox`, then exit without running the agent |
 | `-all-net`  | off                                               | Let the sandbox reach any public host, not just the allow-list (requires `-sandbox`; see below) |
+| `-allow-private` | off                                          | Honor `private host:port` entries in `.rnes/policy.txt`, letting those hosts resolve to non-public addresses such as LAN or VPN endpoints (requires `-sandbox`; see below) |
 | `-no-inspect` | off                                             | Don't decrypt the sandbox's HTTPS in the proxy; tunnel it unread (requires `-sandbox`; see below) |
 | `-web`      | off                                               | Open the session's web UI in your browser at startup; the TUI keeps running and both share one live session |
 | `-no-web`   | off                                               | Don't serve the session's web UI at all (with `-sandbox` it is exposed on a loopback port by default) |
@@ -294,10 +295,12 @@ ownership".
     `RNES_OPENROUTER_API_KEY` is set, `api.mistral.ai:443` when
     `RNES_MISTRAL_API_KEY` is set, and a cloud harness's own endpoints) and
     prints the active allow-list at startup, marking entries that skip TLS
-    interception with `(no-inspect)`; an empty `.rnes/policy.txt` restricts the
-    sandbox to those automatic entries alone. Wildcard `*` and `private` are not
-    permitted in `.rnes/policy.txt` (use `-all-net` on the command line
-    instead). Prefix an entry with `no-inspect` to tunnel its TLS traffic
+    interception with `(no-inspect)`, and entries allowed to reach non-public
+    addresses with `(private)`; an empty `.rnes/policy.txt` restricts the
+    sandbox to those automatic entries alone. Wildcard `*` is never permitted
+    in `.rnes/policy.txt` (use `-all-net` on the command line instead), and
+    `private` entries are rejected unless rnes is also run with `-allow-private`
+    (see below). Prefix an entry with `no-inspect` to tunnel its TLS traffic
     untouched instead of decrypting it (needed for HTTP/2, gRPC, WebSockets or
     certificate-pinned endpoints):
     `no-inspect example.com:443`. Every
@@ -311,6 +314,15 @@ ownership".
     or opened by `-all-net` — must resolve to a public unicast IP when dialed,
     keeping your machine, `169.254.169.254` (cloud metadata), your LAN and VPN
     / CGNAT ranges blocked even against DNS rebinding.
+  - `-allow-private` is the one exception to that rule: a `private host:port`
+    entry in `.rnes/policy.txt` may resolve to a non-public address — a LAN or
+    VPN endpoint such as a self-hosted MCP server, or the host itself. The
+    sandbox cannot grant it to itself: `private` entries are rejected unless
+    rnes runs with `-allow-private`, which only the command line can pass
+    (the policy file itself is mounted read-only into the sandbox). It
+    composes with `-all-net`; it cannot whitelist anything not named in the
+    policy, and whether the proxy container can actually route to a LAN
+    address still depends on your Docker setup. Requires `-sandbox`.
   - A blocked host shows up to the agent as a 403 response from `rnes-proxy`,
     and when the session ends `rnes` prints a summary of any blocked
     `host:port` attempts from the proxy log.

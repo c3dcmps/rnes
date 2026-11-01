@@ -19,7 +19,7 @@ import (
 // ignored. A malformed line is an error — callers must never fall back to
 // allow-all, or to a policy that differs from what was written.
 func ParsePolicy(r io.Reader) (Policy, error) {
-	return parsePolicy(r, true)
+	return parsePolicy(r, true, true)
 }
 
 // ParseUserPolicy reads a user-managed policy file (.rnes/policy.txt): one
@@ -28,10 +28,21 @@ func ParsePolicy(r io.Reader) (Policy, error) {
 // egress is gated by the -all-net CLI flag) and "private" entries (every user
 // policy host must resolve to a public address).
 func ParseUserPolicy(r io.Reader) (Policy, error) {
-	return parsePolicy(r, false)
+	return parsePolicy(r, false, false)
 }
 
-func parsePolicy(r io.Reader, internal bool) (Policy, error) {
+// ParseUserPolicyAllowingPrivate reads a user-managed policy file like
+// ParseUserPolicy, but additionally accepts "private host:port" entries,
+// whose targets may resolve to non-public addresses (the LAN, a VPN, or the
+// host itself). It backs the -allow-private CLI flag, the only way a project
+// policy gets to leave the sandbox: without it, ParseUserPolicy rejects
+// "private" entries, so the file can't grant LAN access no matter what it
+// contains.
+func ParseUserPolicyAllowingPrivate(r io.Reader) (Policy, error) {
+	return parsePolicy(r, false, true)
+}
+
+func parsePolicy(r io.Reader, internal, allowPrivate bool) (Policy, error) {
 	var hostports, privates, noInspects []string
 	anyPublic := false
 	sc := bufio.NewScanner(r)
@@ -49,8 +60,8 @@ func parsePolicy(r io.Reader, internal bool) (Policy, error) {
 			continue
 		}
 		if rest, ok := strings.CutPrefix(line, "private "); ok {
-			if !internal {
-				return Policy{}, fmt.Errorf("line %d: \"private\" entries are not allowed in policy.txt", n)
+			if !internal && !allowPrivate {
+				return Policy{}, fmt.Errorf("line %d: \"private\" entries are not allowed in policy.txt; pass -allow-private on the command line instead", n)
 			}
 			hp := strings.TrimSpace(rest)
 			if err := validateHostPort(hp); err != nil {
