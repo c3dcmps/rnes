@@ -192,6 +192,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
 | `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
+| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). On macOS, set with `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` (keychain after browser sign-in); on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section) and `export RNES_MISTRAL_API_KEY=<key>`. |
 
 ### Sharing a llama-server across sessions
 
@@ -290,7 +291,8 @@ ownership".
     existing file). When `.rnes/policy.txt` is present, `-sandbox` uses it
     instead of the built-in defaults (still adding the session's llama-server
     for model-server harnesses, `openrouter.ai:443` when
-    `RNES_OPENROUTER_API_KEY` is set, and a cloud harness's own endpoints) and
+    `RNES_OPENROUTER_API_KEY` is set, `api.mistral.ai:443` when
+    `RNES_MISTRAL_API_KEY` is set, and a cloud harness's own endpoints) and
     prints the active allow-list at startup, marking entries that skip TLS
     interception with `(no-inspect)`; an empty `.rnes/policy.txt` restricts the
     sandbox to those automatic entries alone. Wildcard `*` and `private` are not
@@ -392,6 +394,17 @@ ownership".
     OpenRouter model is used. The proxy log shows requests by host.
   - Requires `-sandbox` (ignored with a note otherwise) and TLS interception:
     `rnes` refuses `-no-inspect` while the variable is set.
+- **Mistral models:** with `RNES_MISTRAL_API_KEY` set, the sandbox can use
+  Mistral models alongside the local llama-server, by the same mechanism as
+  OpenRouter models above: the sandbox only gets
+  `MISTRAL_API_KEY=<placeholder>`, and the proxy swaps it for the key in the
+  `Authorization` header, only at `api.mistral.ai:443`. A Vibe subscription
+  key works: on macOS after browser sign-in it sits in the keychain (service
+  `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on Linux, copy the key from
+  `https://chat.mistral.ai/code/extensions` (Advanced section). The same
+  scope, privacy and `-no-inspect` caveats as OpenRouter apply; a subscription
+  key is shared with your Vibe usage, so prefer a dedicated
+  console.mistral.ai key for agents.
 - Session data inside the container is discarded on exit (`--rm`), except a
   harness's own persisted auth volume (`agy`; see *Antigravity* below).
 
@@ -497,7 +510,8 @@ rnes -sandbox -skills-dir ~/team-skills -skill deploy
 - **Security:** a skill's content is untrusted input to the agent, like any
   project file, and it reaches the model: every attached skill's name and
   description are in the agent's prompt, and its files whenever the agent reads
-  them. With an OpenRouter model, that means they leave your machine. Attaching
+  them. With an OpenRouter or Mistral model, that means they leave your
+  machine. Attaching
   skills adds no credentials or environment variables. Only attach skills you
   trust and are happy to send to the model.
 - Like the other sandbox flags, `-skill` and `-skills-dir` require `-sandbox`,
@@ -513,8 +527,8 @@ sandbox, using your Google subscription instead of a local model. It requires
 - `-host` and `-port` are rejected.
 - `-model` is forwarded as `agy --model` only when passed explicitly;
   otherwise agy keeps its own model choice.
-- `RNES_OPENROUTER_API_KEY` is ignored with a note (that provider is an
-  opencode feature).
+- `RNES_OPENROUTER_API_KEY` and `RNES_MISTRAL_API_KEY` are ignored with a
+  note (those providers are opencode features).
 - Arguments after `--` are forwarded to `agy` (e.g.
   `rnes -sandbox -harness agy -- --version`).
 
@@ -542,7 +556,8 @@ runs:
 - Remove one with `docker volume rm rnes-auth-agy-<hash>`; this signs that
   project out and deletes its transcripts.
 
-**Security trade-off.** Unlike the GitHub and OpenRouter credentials, agy's
+**Security trade-off.** Unlike the GitHub and cloud-provider keys (OpenRouter,
+Mistral), agy's
 live OAuth session is inside the sandbox, because the agent has to use it
 directly. Anything that escapes the sandbox can use that session until it
 expires or you remove the volume. The sandbox still drops all Linux

@@ -94,13 +94,16 @@ func InjectorFromStdin(r *bufio.Reader, pol Policy, logf func(string, ...any)) (
 	return in, nil
 }
 
-// BuildProvider turns a config entry into its Provider ("github" or "openrouter").
+// BuildProvider turns a config entry into its Provider ("github", "openrouter"
+// or "mistral").
 func BuildProvider(c ProviderConfig) (Provider, error) {
 	switch c.Name {
 	case "github":
 		return NewGitHubProvider(c.Token, c.Placeholder)
 	case "openrouter":
 		return NewOpenRouterProvider(c.Token, c.Placeholder)
+	case "mistral":
+		return NewMistralProvider(c.Token, c.Placeholder)
 	default:
 		return nil, fmt.Errorf("unknown provider %q", c.Name)
 	}

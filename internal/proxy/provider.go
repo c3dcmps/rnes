@@ -72,6 +72,12 @@ func NewOpenRouterProvider(key, placeholder string) (*StaticProvider, error) {
 	return NewStaticProvider("openrouter", []string{"openrouter.ai:443"}, key, placeholder)
 }
 
+// NewMistralProvider is the Mistral API key provider. opencode's built-in
+// mistral provider sends the key as a Bearer token.
+func NewMistralProvider(key, placeholder string) (*StaticProvider, error) {
+	return NewStaticProvider("mistral", []string{"api.mistral.ai:443"}, key, placeholder)
+}
+
 func (p *StaticProvider) Name() string        { return p.name }
 func (p *StaticProvider) Hosts() []string     { return p.hosts }
 func (p *StaticProvider) Placeholder() string { return p.placeholder }
