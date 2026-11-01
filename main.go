@@ -302,10 +302,11 @@ Environment:
                       ever holds a placeholder, but an agent in it can still make
                       Mistral calls, so prefer a key scoped to what the agent needs.
                       To reuse your Vibe subscription key instead (shared with your
-                      Vibe usage), from the keychain after browser sign-in (macOS):
+                      Vibe usage), on macOS after browser sign-in:
                         export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)
-                      or from the .env file when you pasted an API key into it:
-                        export RNES_MISTRAL_API_KEY=$(grep '^MISTRAL_API_KEY=' ~/.vibe/.env | cut -d= -f2)
+                      On Linux, copy the key from https://chat.mistral.ai/code/extensions
+                      (Advanced section):
+                        export RNES_MISTRAL_API_KEY=<key>
                       Local llama stays the default; switch to a mistral model inside
                       opencode. Prompts and code context leave your machine when you
                       do.

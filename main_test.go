@@ -147,7 +147,7 @@ func TestValidateAcceptsAGitHubTokenWithSandbox(t *testing.T) {
 func TestUsageDocumentsTheGitHubTokenAndTheGhShortcut(t *testing.T) {
 	var buf bytes.Buffer
 	usage(&buf)
-	for _, want := range []string{"Environment:", "RNES_GITHUB_TOKEN", "fine-grained", "export RNES_GITHUB_TOKEN=$(gh auth token)", "RNES_OPENROUTER_API_KEY", "RNES_MISTRAL_API_KEY", "export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.openrouter.key')", "export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)", "export RNES_MISTRAL_API_KEY=$(grep '^MISTRAL_API_KEY=' ~/.vibe/.env | cut -d= -f2)", "-sandbox"} {
+	for _, want := range []string{"Environment:", "RNES_GITHUB_TOKEN", "fine-grained", "export RNES_GITHUB_TOKEN=$(gh auth token)", "RNES_OPENROUTER_API_KEY", "RNES_MISTRAL_API_KEY", "export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.openrouter.key')", "export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)", "https://chat.mistral.ai/code/extensions", "-sandbox"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage is missing %q:\n%s", want, buf.String())
 		}

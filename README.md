@@ -191,7 +191,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
 | `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
-| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). Set with `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` (macOS keychain after browser sign-in), or from `~/.vibe/.env` if you pasted an API key there. |
+| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). On macOS, set with `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` (keychain after browser sign-in); on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section) and `export RNES_MISTRAL_API_KEY=<key>`. |
 
 ### Sharing a llama-server across sessions
 
@@ -398,12 +398,12 @@ ownership".
   OpenRouter models above: the sandbox only gets
   `MISTRAL_API_KEY=<placeholder>`, and the proxy swaps it for the key in the
   `Authorization` header, only at `api.mistral.ai:443`. A Vibe subscription
-  key works: after browser sign-in it sits in the macOS keychain (service
-  `ai.mistral.vibe`, account `MISTRAL_API_KEY`), or in `~/.vibe/.env` when an
-  API key was pasted there. The same scope,
-  privacy and `-no-inspect` caveats as OpenRouter apply; a subscription key
-  is shared with your Vibe usage, so prefer a dedicated console.mistral.ai
-  key for agents.
+  key works: on macOS after browser sign-in it sits in the keychain (service
+  `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on Linux, copy the key from
+  `https://chat.mistral.ai/code/extensions` (Advanced section). The same
+  scope, privacy and `-no-inspect` caveats as OpenRouter apply; a subscription
+  key is shared with your Vibe usage, so prefer a dedicated
+  console.mistral.ai key for agents.
 - Session data inside the container is discarded on exit (`--rm`), except a
   harness's own persisted auth volume (`agy`; see *Antigravity* below).
 
