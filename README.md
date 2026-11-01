@@ -585,18 +585,18 @@ sandbox. Instead, each project gets its own Docker named volume,
 mounted read-write at codex's credential location, `/home/rnes/.codex`
 (`auth.json`, `config.toml`). It is kept across runs:
 
-- **First session:** codex asks you to sign in. Choose *Sign in with
-  ChatGPT*: codex starts its OAuth callback server inside the container
-  (loopback port 1455, which the container can't publish directly), so rnes
-  forwards that port through the session's proxy and publishes it on the
-  host's loopback only. Open the URL codex prints in a browser on this
-  machine, sign in with the account holding your ChatGPT subscription, and
-  the callback lands back in the container. The login is stored in the
-  volume, so later sessions in the same project start signed in — no browser
-  round-trip again. If the port is taken (e.g. by a parallel codex session),
-  or your browser can't reach this machine's loopback, sign in with
-  `codex login --device-auth` instead: it needs no callback port, only that
-  device-code login is enabled in your ChatGPT security settings.
+- **First session:** sign in with the device-code flow. From inside the
+  sandbox (or as the session's command:
+  `rnes -sandbox -harness codex -- login --device-auth`), run
+  `codex login --device-auth`: codex prints a code and a URL — open the URL
+  in a browser on any machine, sign in with the account holding your
+  ChatGPT subscription, and enter the code. The browser flow (*Sign in with
+  ChatGPT*) is not usable here: codex's OAuth callback server binds the
+  container's loopback, which the host's browser can't reach, and rnes
+  deliberately forwards no ports into the sandbox. The login is stored in
+  the volume, so later sessions in the same project start signed in — one
+  device-code round-trip ever. It needs device-code login to be enabled in
+  your ChatGPT security settings.
 - Different projects never see each other's credentials.
 - `rnes` prints the volume name at startup.
 - List them with `docker volume ls --filter label=rnes.auth`.

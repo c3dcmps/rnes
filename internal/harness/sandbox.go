@@ -101,10 +101,6 @@ type sandboxProfile struct {
 	// webUI reports whether the harness serves opencode's web UI, which rnes
 	// can expose on a loopback port and open in the browser.
 	webUI bool
-	// authCallbackPort, when non-zero, is the container port hosting the
-	// harness's OAuth callback server; runArgsForModel publishes it on host
-	// loopback (at the same port) so a browser can complete the sign-in.
-	authCallbackPort int
 	// containerArgs returns the arguments passed to the image's ENTRYPOINT.
 	containerArgs func(modelID string, modelSet bool, extraArgs []string) []string
 }
@@ -790,13 +786,6 @@ func (s *Sandbox) runArgsForModel(name, dir string, pn *proxyNet, tty bool, mode
 			"--entrypoint", "sh",
 			s.image, "-c", s.webScript(),
 		)
-	}
-	if s.profile.authCallbackPort != 0 {
-		// The harness's OAuth callback server binds the container's loopback,
-		// which the image relays to all interfaces (base-codex runs socat for
-		// this); publish it on host loopback so a browser can complete the
-		// sign-in.
-		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.profile.authCallbackPort, s.profile.authCallbackPort+1))
 	}
 	args = append(args, s.image)
 	if s.profile.containerArgs != nil {

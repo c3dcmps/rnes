@@ -7,7 +7,7 @@
 FROM node:22-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates socat \
+ && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @openai/codex \
  && npm cache clean --force
@@ -21,7 +21,8 @@ ENV HOME=/home/rnes
 ENV CODEX_HOME=/home/rnes/.codex
 USER rnes
 WORKDIR /workspace
-# codex's OAuth callback server binds the container's loopback (port 1455),
-# so a socat relay (started beside codex) re-exposes it on all interfaces for
-# rnes's host-side publish of the callback port.
-ENTRYPOINT ["sh", "-c", "socat TCP-LISTEN:1456,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:1455 >/dev/null 2>&1 & exec codex \"$@\"", "--"]
+# codex's OAuth callback server binds the container's loopback, which the
+# host's browser can't reach, so sign-in uses the device-code flow
+# (codex login --device-auth): no inbound port, and the auth volume keeps the
+# login across sessions.
+ENTRYPOINT ["codex"]
