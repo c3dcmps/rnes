@@ -76,7 +76,8 @@ the session's generated config so it starts on it.
 | `-build`    | off                                               | Rebuild the sandbox image even if it exists (requires `-sandbox`) |
 | `-sandbox-update` | off                                         | Rebuild the sandbox images from scratch, then exit without running the agent (implies `-sandbox` and `-build`). Without `-harness`, rebuilds every harness's images; with it, only that harness's (and, without `-image`, every image on its base) |
 | `-generate-policy` | off                                        | Write a starter `.rnes/policy.txt` in the current directory for `-sandbox`, then exit without running the agent |
-| `-all-net`  | off                                               | Let the sandbox reach any public host, not just the allow-list (requires `-sandbox`; see below) |
+| `-allow-public` | off                                          | Let the sandbox reach any public host, not just the allow-list (requires `-sandbox`; see below) |
+| `-allow-private` | off                                         | Let the sandbox reach private addresses (RFC 1918 / IPv6 ULA) outside the allow-list; listed hosts keep their public-only check unless marked `private` in `policy.txt` (requires `-sandbox`; see below) |
 | `-no-inspect` | off                                             | Don't decrypt the sandbox's HTTPS in the proxy; tunnel it unread (requires `-sandbox`; see below) |
 | `-web`      | off                                               | Open the session's web UI in your browser at startup; the TUI keeps running and both share one live session |
 | `-no-web`   | off                                               | Don't serve the session's web UI at all (with `-sandbox` it is exposed on a loopback port by default) |
@@ -294,23 +295,41 @@ ownership".
     `RNES_OPENROUTER_API_KEY` is set, `api.mistral.ai:443` when
     `RNES_MISTRAL_API_KEY` is set, and a cloud harness's own endpoints) and
     prints the active allow-list at startup, marking entries that skip TLS
-    interception with `(no-inspect)`; an empty `.rnes/policy.txt` restricts the
-    sandbox to those automatic entries alone. Wildcard `*` and `private` are not
-    permitted in `.rnes/policy.txt` (use `-all-net` on the command line
-    instead). Prefix an entry with `no-inspect` to tunnel its TLS traffic
-    untouched instead of decrypting it (needed for HTTP/2, gRPC, WebSockets or
-    certificate-pinned endpoints):
-    `no-inspect example.com:443`. Every
+    interception with `(no-inspect)` and per-entry private ones with
+    `(private)`; an empty `.rnes/policy.txt` restricts the sandbox to those
+    automatic entries alone. Wildcard `*` is not permitted in
+    `.rnes/policy.txt` (use `-allow-public` on the command line instead).
+    Prefix an entry with `private` to let that one endpoint resolve to RFC 1918
+    / IPv6 ULA as well as a public address (e.g.
+    `private host.docker.internal:5432`); use `-allow-private` to reach any
+    private address outside the list. Prefix an entry with `no-inspect` to
+    tunnel its TLS traffic untouched instead of decrypting it (needed for
+    HTTP/2, gRPC, WebSockets or certificate-pinned endpoints):
+    `no-inspect example.com:443`. The two prefixes can be combined in either
+    order, e.g. `no-inspect private host.docker.internal:443`. Every
     `-sandbox` run ensures `<cwd>/.rnes` exists on the host (an empty directory
     is invisible to `git status`) and mounts it read-only at
     `/workspace/.rnes` (rejecting symlinks), so an agent inside the container
     can never create, edit or remove `.rnes/policy.txt`. Without `-sandbox`, an
     existing `.rnes/policy.txt` is ignored with a note.
-  - `-all-net` opens the sandbox up to any public host over http(s) instead.
-    Every destination other than llama-server — whether listed in `policy.txt`
-    or opened by `-all-net` — must resolve to a public unicast IP when dialed,
-    keeping your machine, `169.254.169.254` (cloud metadata), your LAN and VPN
-    / CGNAT ranges blocked even against DNS rebinding.
+  - `-allow-public` opens the sandbox up to any public host over http(s)
+    instead of just the allow-list. Every destination other than llama-server —
+    whether listed in `policy.txt` or opened by `-allow-public` — must still
+    resolve to a public unicast IP when dialed, keeping your machine,
+    `169.254.169.254` (cloud metadata), your LAN and VPN / CGNAT ranges blocked
+    even against DNS rebinding.
+  - `-allow-private` instead opens the sandbox up to private addresses outside
+    the allow-list — RFC 1918 (`10/8`, `172.16/12`, `192.168/16`) and IPv6
+    unique-local (`fc00::/7`) — whether reached by name or IP, including the
+    host and the LAN. Hosts already on the allow-list keep their public-only
+    address check, so an internal host is reachable through `-allow-private`
+    when it is not listed in `.rnes/policy.txt` (the session's model server is
+    the exception: it is marked private automatically). To open one listed
+    endpoint instead, mark it `private host:port` in `.rnes/policy.txt`.
+    Public egress stays limited to the allow-list. Loopback, link-local
+    (including cloud metadata `169.254.169.254`), CGNAT / Tailscale and
+    multicast stay blocked. Combine with `-allow-public` when a session needs
+    public and private egress everywhere.
   - A blocked host shows up to the agent as a 403 response from `rnes-proxy`,
     and when the session ends `rnes` prints a summary of any blocked
     `host:port` attempts from the proxy log.
@@ -326,9 +345,10 @@ ownership".
   By default the proxy decrypts HTTPS to the hosts on its allow-list so it can
   log each request with the method, host, path, status and duration — and never
   the query string, headers or bodies. Plain `http://` forwards are logged the
-  same way; blind `CONNECT` tunnels (such as hosts opened only by `-all-net`,
-  which stay tunnelled with their real certificates) log `CONNECT <host:port> ->
-  tunnelled`; blocked attempts log `denied <host:port>`. `-no-inspect` turns TLS
+  same way; blind `CONNECT` tunnels (such as hosts opened only by
+  `-allow-public` or `-allow-private`, which stay tunnelled with their real
+  certificates) log `CONNECT <host:port> -> tunnelled`; blocked attempts log
+  `denied <host:port>`. `-no-inspect` turns TLS
   decryption off while keeping host-level `CONNECT`, `http://` and `denied`
   logging.
   - *The CA:* the proxy creates a certificate authority for each session. Its
@@ -563,9 +583,9 @@ directly. Anything that escapes the sandbox can use that session until it
 expires or you remove the volume. The sandbox still drops all Linux
 capabilities, enables `no-new-privileges`, has no direct host route apart from
 the proxy, and mounts only the project plus (read-only) `.rnes` and attached
-skills. `-all-net` is especially risky here — a live OAuth session plus
-arbitrary public egress — so rnes prints an explicit warning when the two are
-combined.
+skills. `-allow-public` and `-allow-private` are especially risky here — a live
+OAuth session plus arbitrary egress — so rnes prints an explicit warning when
+they are combined.
 
 **Network.** agy's Google OAuth and Antigravity endpoints are added to the
 session's allow-list as `no-inspect` entries, so their HTTP/2 and gRPC traffic

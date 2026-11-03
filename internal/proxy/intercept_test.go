@@ -88,7 +88,7 @@ func newProxyFor(t *testing.T, hostport string, upstreamTrust *x509.CertPool) (*
 	}
 	audit := &auditLog{}
 	srv := &Server{
-		Policy:      NewPrivatePolicy([]string{hostport}),
+		Policy:      NewAnyAddressPolicy([]string{hostport}),
 		CA:          ca,
 		Logf:        audit.Logf,
 		UpstreamTLS: newTLSConfig(upstreamTrust),
@@ -228,13 +228,13 @@ func TestInterceptLeavesHostsOutsideTheCAAsBlindTunnels(t *testing.T) {
 		fmt.Fprint(w, "real upstream")
 	}))
 	// The CA covers a different host, so localhost is allowed but not
-	// intercepted (what an -all-net host looks like to the CA).
+	// intercepted (what an -allow-public host looks like to the CA).
 	otherCA, err := NewCA([]string{"other.test"})
 	if err != nil {
 		t.Fatalf("NewCA: %v", err)
 	}
 	audit := &auditLog{}
-	srv := &Server{Policy: NewPrivatePolicy([]string{hostport}), CA: otherCA, Logf: audit.Logf}
+	srv := &Server{Policy: NewAnyAddressPolicy([]string{hostport}), CA: otherCA, Logf: audit.Logf}
 	px := httptest.NewServer(srv)
 	defer px.Close()
 
@@ -344,7 +344,7 @@ func TestInterceptOnRequestHookCanChangeTheRequest(t *testing.T) {
 	ca, _ := NewCA([]string{"localhost"})
 	var hookTarget string
 	srv := &Server{
-		Policy:      NewPrivatePolicy([]string{hostport}),
+		Policy:      NewAnyAddressPolicy([]string{hostport}),
 		CA:          ca,
 		Logf:        (&auditLog{}).Logf,
 		UpstreamTLS: &tls.Config{RootCAs: upstreamTrust},
@@ -377,7 +377,7 @@ func TestInterceptOnRequestHookErrorAnswers403(t *testing.T) {
 	}))
 	ca, _ := NewCA([]string{"localhost"})
 	srv := &Server{
-		Policy:      NewPrivatePolicy([]string{hostport}),
+		Policy:      NewAnyAddressPolicy([]string{hostport}),
 		CA:          ca,
 		Logf:        (&auditLog{}).Logf,
 		UpstreamTLS: &tls.Config{RootCAs: upstreamTrust},
@@ -422,8 +422,8 @@ func TestNoInspectEntryTunnelsEvenWhenCACoversHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCA: %v", err)
 	}
-	pol := NewPrivatePolicy([]string{hostport})
-	pol.AllowNoInspect(hostport)
+	pol := NewAnyAddressPolicy([]string{hostport})
+	pol.MarkNoInspect(hostport)
 	audit := &auditLog{}
 	var hookCalled atomic.Bool
 	srv := &Server{
