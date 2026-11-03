@@ -192,7 +192,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
 | `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
-| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). On macOS, set with `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` (keychain after browser sign-in); on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section) and `export RNES_MISTRAL_API_KEY=<key>`. |
+| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). To reuse the key opencode stores, set with `export RNES_MISTRAL_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.mistral.key')`; a Vibe subscription key also works (on macOS, `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` after browser sign-in; on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section)). |
 
 ### Sharing a llama-server across sessions
 
@@ -384,9 +384,10 @@ ownership".
     credential providers are active at startup.
   - *Curating models:* add `provider.openrouter.models` to your host
     `opencode.jsonc`; the sandbox config starts from it. Keep keys out of that
-    file: with `RNES_OPENROUTER_API_KEY` set, `rnes` removes a literal
-    `provider.openrouter.options.apiKey` from the sandbox's copy (with a
-    warning), because it would override the placeholder.
+    file: `rnes` always removes every provider's literal `apiKey` from the
+    sandbox's copy (with a warning) so a host-only key never reaches the
+    container; with `RNES_OPENROUTER_API_KEY` set, the proxy injects the key
+    instead.
   - *Scope:* the key is protected from theft, not from use: an agent in the
     sandbox can make OpenRouter calls through the proxy. **Use a dedicated key
     with a low credit limit.**
