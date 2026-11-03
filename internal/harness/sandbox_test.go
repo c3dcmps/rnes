@@ -740,38 +740,28 @@ func TestSandboxRunSendsTheOpenRouterKeyOnStdinNotArgv(t *testing.T) {
 	}
 }
 
-func TestConfigureDropsALiteralOpenRouterKeyFromTheHostConfig(t *testing.T) {
+func TestConfigureDropsEveryLiteralProviderAPIKey(t *testing.T) {
 	host := filepath.Join(t.TempDir(), "opencode.jsonc")
-	if err := os.WriteFile(host, []byte(`{"providers":{"openrouter":{"settings":{"apiKey":"sk-or-REAL"}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(host, []byte(`{"providers":{"openrouter":{"settings":{"apiKey":"sk-or-REAL","x":1}},"mistral":{"settings":{"apiKey":"mis-REAL"}}},"provider":{"anthropic":{"options":{"apiKey":"sk-ant-REAL","y":2}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for key, wantGone := range map[string]bool{"sk-or-SECRET": true, "": false} {
-		s := newSandbox(Options{Sandbox: true, OpenRouterKey: key}, host)
-		if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
-			t.Fatal(err)
-		}
-		b, _ := os.ReadFile(s.generated)
-		os.Remove(s.generated)
-		if gone := !strings.Contains(string(b), "sk-or-REAL"); gone != wantGone {
-			t.Errorf("key %q: literal key removed = %v, want %v", key, gone, wantGone)
-		}
-	}
-}
-
-func TestConfigureDropsALiteralMistralKeyFromTheHostConfig(t *testing.T) {
-	host := filepath.Join(t.TempDir(), "opencode.jsonc")
-	if err := os.WriteFile(host, []byte(`{"provider":{"mistral":{"options":{"apiKey":"mis-REAL"}}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for key, wantGone := range map[string]bool{"mis-SECRET": true, "": false} {
+	// Every key is dropped whether or not a session key exists.
+	for _, key := range []string{"mis-SECRET", ""} {
 		s := newSandbox(Options{Sandbox: true, MistralKey: key}, host)
 		if err := s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"}); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := os.ReadFile(s.generated)
 		os.Remove(s.generated)
-		if gone := !strings.Contains(string(b), "mis-REAL"); gone != wantGone {
-			t.Errorf("key %q: literal key removed = %v, want %v", key, gone, wantGone)
+		for _, secret := range []string{"sk-or-REAL", "mis-REAL", "sk-ant-REAL"} {
+			if strings.Contains(string(b), secret) {
+				t.Errorf("key %q: the literal key %s stayed in the sandbox's config:\n%s", key, secret, b)
+			}
+		}
+		for _, want := range []string{`"x": 1`, `"y": 2`} {
+			if !strings.Contains(string(b), want) {
+				t.Errorf("key %q: out is missing %s:\n%s", key, want, b)
+			}
 		}
 	}
 }

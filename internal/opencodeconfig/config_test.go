@@ -212,27 +212,31 @@ func TestStripJSONComments(t *testing.T) {
 	}
 }
 
-func TestDropProviderOptionRemovesOnlyTheNamedOption(t *testing.T) {
-	// The v2 shape (providers/openrouter/settings) and the pre-migration
-	// shape (provider/legacy/options) both carry an apiKey; each call must
-	// drop only the named provider's named option.
-	in := []byte(`{"model":"m","providers":{"openrouter":{"settings":{"apiKey":"sk-or-REAL","x":1},"models":{"a":{}}}},"provider":{"legacy":{"options":{"apiKey":"sk-or-OLD","y":2}}}}`)
-	out, dropped, err := DropProviderOption(in, "openrouter", "apiKey")
-	if err != nil || !dropped {
-		t.Fatalf("dropped = %v, err = %v", dropped, err)
+func TestDropProviderAPIKeysStripsEveryProviderAndOnlyTheKeys(t *testing.T) {
+	// The v2 shape (providers/<id>/settings) and the pre-migration shape
+	// (provider/<id>/options) both carry apiKeys; every one must go, and
+	// every other option must stay.
+	in := []byte(`{"model":"m","providers":{"openrouter":{"settings":{"apiKey":"sk-or-REAL","x":1},"models":{"a":{}}},"mistral":{"settings":{"apiKey":"mis-REAL"}}},"provider":{"legacy":{"options":{"apiKey":"sk-old-REAL","y":2}}},"theme":"dark"}`)
+	out, dropped, err := DropProviderAPIKeys(in)
+	if err != nil {
+		t.Fatalf("DropProviderAPIKeys: %v", err)
 	}
-	if strings.Contains(string(out), "sk-or-REAL") || !strings.Contains(string(out), `"x": 1`) || !strings.Contains(string(out), `"models"`) {
-		t.Errorf("out = %s", out)
+	if got, want := strings.Join(dropped, ","), "legacy,mistral,openrouter"; got != want {
+		t.Errorf("dropped = %q, want %q (sorted)", got, want)
 	}
-	out, dropped, err = DropProviderOption(out, "legacy", "apiKey")
-	if err != nil || !dropped {
-		t.Fatalf("legacy: dropped = %v, err = %v", dropped, err)
+	for _, secret := range []string{"sk-or-REAL", "mis-REAL", "sk-old-REAL"} {
+		if strings.Contains(string(out), secret) {
+			t.Errorf("%s stayed in the config:\n%s", secret, out)
+		}
 	}
-	if strings.Contains(string(out), "sk-or-OLD") || !strings.Contains(string(out), `"y": 2`) || !strings.Contains(string(out), `"model"`) {
-		t.Errorf("out = %s", out)
+	for _, want := range []string{`"x": 1`, `"y": 2`, `"models"`, `"model"`, `"theme"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("out is missing %s:\n%s", want, out)
+		}
 	}
-	if _, dropped, _ := DropProviderOption(out, "openrouter", "apiKey"); dropped {
-		t.Error("nothing left to drop, but dropped = true")
+	// Idempotent: nothing left to drop, and the config comes back untouched.
+	if _, dropped, err := DropProviderAPIKeys(out); err != nil || dropped != nil {
+		t.Errorf("second pass: dropped = %v, err = %v", dropped, err)
 	}
 }
 

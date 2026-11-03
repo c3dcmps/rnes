@@ -399,9 +399,16 @@ ownership".
   Mistral models alongside the local llama-server, by the same mechanism as
   OpenRouter models above: the sandbox only gets
   `MISTRAL_API_KEY=<placeholder>`, and the proxy swaps it for the key in the
-  `Authorization` header, only at `api.mistral.ai:443`. A Vibe subscription
-  key works: on macOS after browser sign-in it sits in the keychain (service
-  `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on Linux, copy the key from
+  `Authorization` header, only at `api.mistral.ai:443`. To reuse the key
+  opencode stores (same `opencode auth login` sign-in as on the host):
+
+  ```sh
+  export RNES_MISTRAL_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.mistral.key')
+  ```
+
+  A Vibe subscription key also works: on macOS after browser sign-in it sits
+  in the keychain (service `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on
+  Linux, copy the key from
   `https://chat.mistral.ai/code/extensions` (Advanced section). The same
   scope, privacy and `-no-inspect` caveats as OpenRouter apply; a subscription
   key is shared with your Vibe usage, so prefer a dedicated

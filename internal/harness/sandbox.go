@@ -451,24 +451,21 @@ func (s *Sandbox) Configure(providerKey, baseURL string, modelIDs []string) erro
 	if err != nil {
 		return err
 	}
-	// A literal key in the host's openrouter block would reach the container
-	// and override the placeholder, so the proxy would never be involved.
-	if s.openrouterKey != "" {
-		var dropped bool
-		if out, dropped, err = opencodeconfig.DropProviderOption(out, "openrouter", "apiKey"); err != nil {
-			return err
-		}
-		if dropped {
-			fmt.Fprintln(os.Stderr, "rnes: warning: removed the openrouter apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_OPENROUTER_API_KEY instead")
-		}
+	// A literal apiKey in any provider block must never reach the container:
+	// for the proxied providers (openrouter, mistral) it would override the
+	// placeholder and skip the proxy; for any other provider it would still
+	// leak the credential into the sandbox, usable whenever a project policy
+	// allow-lists its host. Strip them all, whatever the session's keys are.
+	out, dropped, err := opencodeconfig.DropProviderAPIKeys(out)
+	if err != nil {
+		return err
 	}
-	if s.mistralKey != "" {
-		var dropped bool
-		if out, dropped, err = opencodeconfig.DropProviderOption(out, "mistral", "apiKey"); err != nil {
-			return err
-		}
-		if dropped {
-			fmt.Fprintln(os.Stderr, "rnes: warning: removed the mistral apiKey from the sandbox's copy of your opencode config; the proxy injects RNES_MISTRAL_API_KEY instead")
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "rnes: warning: removed the apiKey of %s from the sandbox's copy of your opencode config so it never reaches the container", strings.Join(dropped, ", "))
+		if s.openrouterKey != "" || s.mistralKey != "" {
+			fmt.Fprintln(os.Stderr, "; the proxy injects its key where RNES_OPENROUTER_API_KEY or RNES_MISTRAL_API_KEY is set")
+		} else {
+			fmt.Fprintln(os.Stderr, "; without a provider key those models don't work in the sandbox")
 		}
 	}
 	// CreateTemp creates the file 0600; the container runs as the same uid.
