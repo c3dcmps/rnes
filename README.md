@@ -382,12 +382,18 @@ ownership".
     added to the proxy's policy (so it is decrypted and logged) only when the
     key is set. Streaming completions pass through. `rnes` prints which
     credential providers are active at startup.
-  - *Curating models:* add `provider.openrouter.models` to your host
-    `opencode.jsonc`; the sandbox config starts from it. Keep keys out of that
-    file: `rnes` always removes every provider's literal `apiKey` from the
-    sandbox's copy (with a warning) so a host-only key never reaches the
-    container; with `RNES_OPENROUTER_API_KEY` set, the proxy injects the key
-    instead.
+  - *Curating models:* add `providers.openrouter.models` to your host
+    `opencode.jsonc`; the sandbox config starts from the v2 `providers` block
+    (the legacy `provider` block is inert in opencode v2). Keep keys out of
+    that file: `rnes` always removes every provider's literal `apiKey` from
+    the sandbox's copy (with a warning), so a key that lives only in the
+    host's global config never reaches the container. That strip covers only
+    the literal `apiKey` field of the global config's copy: secrets in other
+    config locations (`providers.<id>.headers`/`.body`, per-model
+    `headers`/`.body`, MCP `environment`/`headers`) pass through untouched,
+    and so do project-level `opencode.json(c)`/`.opencode/` configs in the
+    workspace, which are the project's own files and ride in the mount as-is.
+    With `RNES_OPENROUTER_API_KEY` set, the proxy injects the key instead.
   - *Scope:* the key is protected from theft, not from use: an agent in the
     sandbox can make OpenRouter calls through the proxy. **Use a dedicated key
     with a low credit limit.**

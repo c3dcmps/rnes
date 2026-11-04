@@ -456,17 +456,44 @@ func (s *Sandbox) Configure(providerKey, baseURL string, modelIDs []string) erro
 	// placeholder and skip the proxy; for any other provider it would still
 	// leak the credential into the sandbox, usable whenever a project policy
 	// allow-lists its host. Strip them all, whatever the session's keys are.
+	// This covers only the copy of the global host config: project-level
+	// opencode configs inside the mounted workspace are the project's own
+	// files, readable by the agent like any other workspace file, and are
+	// loaded as-is.
 	out, dropped, err := opencodeconfig.DropProviderAPIKeys(out)
 	if err != nil {
 		return err
 	}
 	if len(dropped) > 0 {
-		fmt.Fprintf(os.Stderr, "rnes: warning: removed the apiKey of %s from the sandbox's copy of your opencode config so it never reaches the container", strings.Join(dropped, ", "))
-		if s.openrouterKey != "" || s.mistralKey != "" {
-			fmt.Fprintln(os.Stderr, "; the proxy injects its key where RNES_OPENROUTER_API_KEY or RNES_MISTRAL_API_KEY is set")
-		} else {
-			fmt.Fprintln(os.Stderr, "; without a provider key those models don't work in the sandbox")
+		// Only the proxied providers get their key back (the proxy injects
+		// it); every other dropped provider just loses access, so the
+		// warning must say which is which instead of claiming the proxy
+		// covers them all.
+		var proxied, lost []string
+		for _, id := range dropped {
+			switch {
+			case id == "openrouter" && s.openrouterKey != "", id == "mistral" && s.mistralKey != "":
+				proxied = append(proxied, id)
+			default:
+				lost = append(lost, id)
+			}
 		}
+		fmt.Fprintf(os.Stderr, "rnes: warning: removed the apiKey of %s from the sandbox's copy of your opencode config so it never reaches the container", strings.Join(dropped, ", "))
+		if len(proxied) > 0 {
+			var from []string
+			for _, id := range proxied {
+				env := "RNES_OPENROUTER_API_KEY"
+				if id == "mistral" {
+					env = "RNES_MISTRAL_API_KEY"
+				}
+				from = append(from, id+" (from "+env+")")
+			}
+			fmt.Fprintf(os.Stderr, "; the proxy injects its key for %s", strings.Join(from, ", "))
+		}
+		if len(lost) > 0 {
+			fmt.Fprintf(os.Stderr, "; %s models don't work in the sandbox without a key of their own", strings.Join(lost, ", "))
+		}
+		fmt.Fprintln(os.Stderr)
 	}
 	// CreateTemp creates the file 0600; the container runs as the same uid.
 	f, err := os.CreateTemp("", "rnes-sandbox-config-*.jsonc")

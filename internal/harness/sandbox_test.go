@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -762,6 +763,59 @@ func TestConfigureDropsEveryLiteralProviderAPIKey(t *testing.T) {
 			if !strings.Contains(string(b), want) {
 				t.Errorf("key %q: out is missing %s:\n%s", key, want, b)
 			}
+		}
+	}
+}
+
+func TestConfigureWarningSeparatesProxiedFromLostProviders(t *testing.T) {
+	host := filepath.Join(t.TempDir(), "opencode.jsonc")
+	if err := os.WriteFile(host, []byte(`{"providers":{"openrouter":{"settings":{"apiKey":"sk-or-REAL"}},"mistral":{"settings":{"apiKey":"mis-REAL"}},"vllm":{"settings":{"apiKey":"sk-vllm-REAL"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Only a dropped key of a proxied provider with a session key is
+	// injected back; everything else is simply lost, and the warning must
+	// not claim the proxy covers it.
+	for _, tc := range []struct {
+		name          string
+		opts          Options
+		want, notWant string
+	}{
+		{
+			name: "openrouter key set",
+			opts: Options{Sandbox: true, OpenRouterKey: "or-SECRET"},
+			want: "the proxy injects its key for openrouter (from RNES_OPENROUTER_API_KEY); " +
+				"mistral, vllm models don't work in the sandbox without a key of their own",
+		},
+		{
+			name:    "no session keys",
+			opts:    Options{Sandbox: true},
+			want:    "mistral, openrouter, vllm models don't work in the sandbox without a key of their own",
+			notWant: "proxy injects",
+		},
+	} {
+		s := newSandbox(tc.opts, host)
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := os.Stderr
+		os.Stderr = w
+		err = s.Configure("llama-cpp", "http://127.0.0.1:8080", []string{"m"})
+		os.Stderr = old
+		w.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(s.generated)
+		var warn bytes.Buffer
+		if _, err := io.Copy(&warn, r); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(warn.String(), tc.want) {
+			t.Errorf("%s: warning = %q, want it to mention %q", tc.name, warn.String(), tc.want)
+		}
+		if tc.notWant != "" && strings.Contains(warn.String(), tc.notWant) {
+			t.Errorf("%s: warning = %q, must not mention %q", tc.name, warn.String(), tc.notWant)
 		}
 	}
 }
