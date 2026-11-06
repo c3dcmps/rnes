@@ -305,8 +305,11 @@ Environment:
                       (requires -sandbox; ignored with -harness agy). The sandbox only
                       ever holds a placeholder, but an agent in it can still make
                       Mistral calls, so prefer a key scoped to what the agent needs.
-                      To reuse your Vibe subscription key instead (shared with your
-                      Vibe usage), on macOS after browser sign-in:
+                      To reuse the key opencode stores instead (same sign-in as on
+                      the host; shared with whatever else uses opencode):
+                        export RNES_MISTRAL_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.mistral.key')
+                      A Vibe subscription key also works (shared with your Vibe
+                      usage), on macOS after browser sign-in:
                         export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)
                       On Linux, copy the key from https://chat.mistral.ai/code/extensions
                       (Advanced section):

@@ -196,7 +196,7 @@ rnes -no-web    # don't expose the web UI (sandbox: no loopback forward)
 | ------------------------- | ----------- |
 | `RNES_GITHUB_TOKEN`       | GitHub token the sandbox's proxy injects for `git` and `gh` (requires `-sandbox`; see *GitHub credentials* below). Prefer a fine-grained token; to reuse your `gh` login, `export RNES_GITHUB_TOKEN=$(gh auth token)`. |
 | `RNES_OPENROUTER_API_KEY` | OpenRouter API key the sandbox's proxy injects at `openrouter.ai` (requires `-sandbox`; ignored with `-harness agy`; see *OpenRouter models* below). Set with `export RNES_OPENROUTER_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.openrouter.key')`. |
-| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). On macOS, set with `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` (keychain after browser sign-in); on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section) and `export RNES_MISTRAL_API_KEY=<key>`. |
+| `RNES_MISTRAL_API_KEY`    | Mistral API key the sandbox's proxy injects at `api.mistral.ai` (requires `-sandbox`; ignored with `-harness agy`; see *Mistral models* below). To reuse the key opencode stores, set with `export RNES_MISTRAL_API_KEY=$(cat ~/.local/share/opencode/auth.json \| jq -c -r '.mistral.key')`; a Vibe subscription key also works (on macOS, `export RNES_MISTRAL_API_KEY=$(security find-generic-password -s ai.mistral.vibe -a MISTRAL_API_KEY -w)` after browser sign-in; on Linux, copy the key from `https://chat.mistral.ai/code/extensions` (Advanced section)). |
 
 ### Sharing a llama-server across sessions
 
@@ -410,11 +410,18 @@ ownership".
     added to the proxy's policy (so it is decrypted and logged) only when the
     key is set. Streaming completions pass through. `rnes` prints which
     credential providers are active at startup.
-  - *Curating models:* add `provider.openrouter.models` to your host
-    `opencode.jsonc`; the sandbox config starts from it. Keep keys out of that
-    file: with `RNES_OPENROUTER_API_KEY` set, `rnes` removes a literal
-    `provider.openrouter.options.apiKey` from the sandbox's copy (with a
-    warning), because it would override the placeholder.
+  - *Curating models:* add `providers.openrouter.models` to your host
+    `opencode.jsonc`; the sandbox config starts from the v2 `providers` block
+    (the legacy `provider` block is inert in opencode v2). Keep keys out of
+    that file: `rnes` always removes every provider's literal `apiKey` from
+    the sandbox's copy (with a warning), so a key that lives only in the
+    host's global config never reaches the container. That strip covers only
+    the literal `apiKey` field of the global config's copy: secrets in other
+    config locations (`providers.<id>.headers`/`.body`, per-model
+    `headers`/`.body`, MCP `environment`/`headers`) pass through untouched,
+    and so do project-level `opencode.json(c)`/`.opencode/` configs in the
+    workspace, which are the project's own files and ride in the mount as-is.
+    With `RNES_OPENROUTER_API_KEY` set, the proxy injects the key instead.
   - *Scope:* the key is protected from theft, not from use: an agent in the
     sandbox can make OpenRouter calls through the proxy. **Use a dedicated key
     with a low credit limit.**
@@ -426,9 +433,16 @@ ownership".
   Mistral models alongside the local llama-server, by the same mechanism as
   OpenRouter models above: the sandbox only gets
   `MISTRAL_API_KEY=<placeholder>`, and the proxy swaps it for the key in the
-  `Authorization` header, only at `api.mistral.ai:443`. A Vibe subscription
-  key works: on macOS after browser sign-in it sits in the keychain (service
-  `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on Linux, copy the key from
+  `Authorization` header, only at `api.mistral.ai:443`. To reuse the key
+  opencode stores (same `opencode auth login` sign-in as on the host):
+
+  ```sh
+  export RNES_MISTRAL_API_KEY=$(cat ~/.local/share/opencode/auth.json | jq -c -r '.mistral.key')
+  ```
+
+  A Vibe subscription key also works: on macOS after browser sign-in it sits
+  in the keychain (service `ai.mistral.vibe`, account `MISTRAL_API_KEY`); on
+  Linux, copy the key from
   `https://chat.mistral.ai/code/extensions` (Advanced section). The same
   scope, privacy and `-no-inspect` caveats as OpenRouter apply; a subscription
   key is shared with your Vibe usage, so prefer a dedicated

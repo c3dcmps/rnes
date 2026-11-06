@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 )
 
@@ -193,41 +194,43 @@ func stripJSONComments(src []byte) []byte {
 	return out
 }
 
-// DropProviderOption removes providers[providerKey].settings[option] from
-// the JSON config in raw, reporting whether it was there. It also removes
-// the legacy provider[providerKey].options[option] written before the v2
-// config migration: the named option is what the sandbox must not see (an
-// openrouter apiKey), and a config last written by the v1-era rnes would
-// otherwise carry it into the container. Other keys are untouched.
-func DropProviderOption(raw []byte, providerKey, option string) ([]byte, bool, error) {
+// DropProviderAPIKeys removes every provider's apiKey from the JSON config in
+// raw — providers[id].settings.apiKey in the v2 shape and the legacy
+// provider[id].options.apiKey written before the v2 config migration — and
+// returns the re-encoded config with the sorted ids whose key was dropped
+// (nil when none was). Every other option in the provider blocks is
+// untouched: the sandbox's copy of the config must carry no key at all.
+func DropProviderAPIKeys(raw []byte) ([]byte, []string, error) {
 	var config map[string]interface{}
 	if err := json.Unmarshal(raw, &config); err != nil {
-		return nil, false, fmt.Errorf("parsing: %w", err)
+		return raw, nil, fmt.Errorf("parsing: %w", err)
 	}
-	// Both locations are always tried: a config can carry the option in each.
-	fromSettings := dropNested(config, "providers", providerKey, "settings", option)
-	fromOptions := dropNested(config, "provider", providerKey, "options", option)
-	if !fromSettings && !fromOptions {
-		return raw, false, nil
+	dropped := map[string]bool{}
+	// Both locations are always tried: a config can carry a key in each.
+	for _, loc := range [...][2]string{{"providers", "settings"}, {"provider", "options"}} {
+		byID, _ := config[loc[0]].(map[string]interface{})
+		for id, v := range byID {
+			block, _ := v.(map[string]interface{})
+			values, _ := block[loc[1]].(map[string]interface{})
+			if _, ok := values["apiKey"]; ok {
+				delete(values, "apiKey")
+				dropped[id] = true
+			}
+		}
 	}
+	if len(dropped) == 0 {
+		return raw, nil, nil
+	}
+	ids := make([]string, 0, len(dropped))
+	for id := range dropped {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	out, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return nil, false, fmt.Errorf("encoding: %w", err)
+		return raw, nil, fmt.Errorf("encoding: %w", err)
 	}
-	return append(out, '\n'), true, nil
-}
-
-// dropNested deletes config[top][providerKey][group][option], reporting
-// whether it was there. A missing level at any depth counts as absent.
-func dropNested(config map[string]interface{}, top, providerKey, group, option string) bool {
-	providers, _ := config[top].(map[string]interface{})
-	block, _ := providers[providerKey].(map[string]interface{})
-	values, _ := block[group].(map[string]interface{})
-	if _, ok := values[option]; !ok {
-		return false
-	}
-	delete(values, option)
-	return true
+	return append(out, '\n'), ids, nil
 }
 
 // SetModel sets the top-level "model" default in the JSON config in raw, in
